@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Physics Tracker - 大屏接收端</title>
+  <link rel="stylesheet" href="css/screen.css">
+  <!-- 引入 QR Code 輕量生成庫 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <!-- 頂部極簡狀態列 -->
+  <header class="top-bar">
+    <div class="brand-badge">
+      <span class="brand-dot"></span>
+      <span>Physics Tracker 大屏接收端</span>
+    </div>
+
+    <div class="room-badge">
+      <span>配對 PIN 碼：</span>
+      <span class="room-pin" id="roomPinText">------</span>
+      <span id="connStatusBadge" style="font-size: 0.8rem; color: #94a3b8; margin-left: 6px;">(本機同步中)</span>
+    </div>
+
+    <div class="top-actions">
+      <button class="btn-icon" id="btnToggleHud" title="顯示/隱藏物理數據儀表板">
+        📊 數據儀表
+      </button>
+      <button class="btn-icon" id="btnClearDraw" title="清除課堂手寫筆跡">
+        🧹 清除筆跡
+      </button>
+      <button class="btn-icon" id="btnSettings" title="雲端 Firebase 設定">
+        ⚙️ 連線設定
+      </button>
+      <button class="btn-icon" id="btnFullscreen" title="切換全螢幕">
+        ⛶ 全螢幕
+      </button>
+    </div>
+  </header>
+
+  <!-- 主視覺舞台 -->
+  <main class="stage-container">
+    <div class="video-wrapper" id="videoWrapper">
+      <!-- 原生影片播放器 (承載高畫質底圖) -->
+      <video id="mainVideo" playsinline preload="auto"></video>
+      <!-- 向量與殘影繪製疊加層 -->
+      <canvas id="vectorCanvas"></canvas>
+      <!-- 課堂即時手寫標註白板層 -->
+      <canvas id="annotationCanvas"></canvas>
+    </div>
+
+    <!-- 待機配對畫面 (Pairing View) -->
+    <div class="standby-overlay" id="standbyOverlay">
+      <div class="standby-card">
+        <h1 class="standby-title">⚡ 物理運動分析大屏模式</h1>
+        <p class="standby-desc">請使用手機掃描下方 QR Code，或開啟手機端輸入 PIN 碼完成配對，開始高幀率物理分析與向量投影。</p>
+
+        <div class="qrcode-box" id="qrcodeBox"></div>
+
+        <div class="pin-display">
+          <span class="pin-label">ROOM PIN</span>
+          <span class="pin-digits" id="pinDisplayDigits">------</span>
+        </div>
+
+        <div class="standby-status">
+          <span class="pulse-dot"></span>
+          <span id="standbyStatusText">等待手機端控制器連線中...</span>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 8px;">
+          <button class="btn-icon" id="btnOpenMobileTab" style="background: rgba(56, 189, 248, 0.2); border-color: #38bdf8;">
+            📱 本機開啟手機控制器
+          </button>
+          <button class="btn-icon" id="btnLoadDemoDirectly">
+            🧪 載入拋體示範影片
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 浮動圖例說明 (Legend) -->
+    <div class="legend-panel" id="legendPanel">
+      <div class="legend-item">
+        <span class="legend-color" style="background: #10b981;"></span>
+        <span>速度向量 $\vec{v}$ (綠色)</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-color" style="background: #ef4444;"></span>
+        <span>加速度向量 $\vec{a}$ (紅色)</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-color" style="background: #38bdf8;"></span>
+        <span>運動殘影頻閃 (Cyan Strobe)</span>
+      </div>
+    </div>
+
+    <!-- 浮動物理儀表板 (HUD Dashboard) -->
+    <div class="physics-hud" id="physicsHud">
+      <div class="hud-item">
+        <span class="hud-label"><span class="hud-dot time"></span>時間 t</span>
+        <span class="hud-value" id="hudTime">0.000 s</span>
+        <span class="hud-sub" id="hudFrame">Frame: 0</span>
+      </div>
+
+      <div class="hud-item">
+        <span class="hud-label">位置 (x, y)</span>
+        <span class="hud-value" id="hudPos">0.00, 0.00 m</span>
+        <span class="hud-sub" id="hudPixelPos">0, 0 px</span>
+      </div>
+
+      <div class="hud-item">
+        <span class="hud-label"><span class="hud-dot vel"></span>速度 |v|</span>
+        <span class="hud-value" id="hudVelMag" style="color: #10b981;">0.00 m/s</span>
+        <span class="hud-sub" id="hudVelComponents">vx: 0.00 | vy: 0.00</span>
+      </div>
+
+      <div class="hud-item">
+        <span class="hud-label"><span class="hud-dot acc"></span>加速度 |a|</span>
+        <span class="hud-value" id="hudAccMag" style="color: #ef4444;">0.00 m/s²</span>
+        <span class="hud-sub" id="hudAccComponents">ax: 0.00 | ay: 0.00</span>
+      </div>
+    </div>
+  </main>
+
+  <!-- Firebase 設定彈窗 -->
+  <div class="modal-backdrop" id="settingsModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>⚙️ Firebase 雲端同步設定</span>
+        <button class="btn-icon" id="btnCloseSettings" style="padding: 4px 8px;">✕</button>
+      </div>
+      <p style="font-size: 0.85rem; color: #94a3b8; line-height: 1.4;">
+        若於同台電腦進行測試，系統已自動透過 BroadcastChannel 實現零延遲雙向同步，無需配置。<br>
+        若需讓遠端手機透過 4G/5G 跨網域遙控教室大屏，請填寫 Firebase Realtime Database 憑證：
+      </p>
+
+      <div class="form-group">
+        <label>Firebase API Key</label>
+        <input type="text" class="form-input" id="cfgApiKey" placeholder="AIzaSy...">
+      </div>
+      <div class="form-group">
+        <label>Database URL</label>
+        <input type="text" class="form-input" id="cfgDbUrl" placeholder="https://your-app-default-rtdb.firebaseio.com">
+      </div>
+      <div class="form-group">
+        <label>Project ID</label>
+        <input type="text" class="form-input" id="cfgProjectId" placeholder="your-app-id">
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-icon" id="btnSaveConfig" style="background: #38bdf8; color: #0f172a; font-weight: bold;">
+          儲存並連線
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { SyncManager } from "./js/firebase-config.js";
+    import { PhysicsEngine } from "./js/physics-engine.js";
+    import { VectorDrawer } from "./js/vector-drawer.js";
+    import { AnnotationLayer } from "./js/annotation.js";
+    import { VideoTracker } from "./js/video-tracker.js";
+
+    // 1. 初始化房間 PIN 碼 (取 URL 參數或隨機 6 碼)
+    const urlParams = new URLSearchParams(window.location.search);
+    let screenId = urlParams.get("room");
+    if (!screenId) {
+      screenId = String(Math.floor(100000 + Math.random() * 900000));
+    }
+
+    document.getElementById("roomPinText").textContent = screenId;
+    document.getElementById("pinDisplayDigits").textContent = screenId;
+
+    // 2. 繪製配對 QR Code
+    const mobileUrl = `${window.location.origin}${window.location.pathname.replace("index.html", "")}mobile.html?room=${screenId}`;
+    new QRCode(document.getElementById("qrcodeBox"), {
+      text: mobileUrl,
+      width: 180,
+      height: 180,
+      colorDark: "#0f172a",
+      colorLight: "#ffffff",
+      correctLevel: QRCode.CorrectLevel.M
+    });
+
+    // 3. 初始化 DOM 元素
+    const video = document.getElementById("mainVideo");
+    const vectorCanvas = document.getElementById("vectorCanvas");
+    const annotationCanvas = document.getElementById("annotationCanvas");
+    const standbyOverlay = document.getElementById("standbyOverlay");
+    const physicsHud = document.getElementById("physicsHud");
+
+    // 4. 初始化核心子系統
+    const physicsEngine = new PhysicsEngine();
+    const vectorDrawer = new VectorDrawer(vectorCanvas);
+    const annotationLayer = new AnnotationLayer(annotationCanvas, {
+      onDrawEvent: (e) => syncManager.sendDrawEvent(e)
+    });
+    const syncManager = new SyncManager(screenId, "screen");
+
+    let currentTrajectory = [];
+
+    // 5. 監聽手機端同步命令
+    syncManager.onStatusChange(async (status) => {
+      console.log("收到狀態同步:", status);
+      if (status.state === "analyzed" || status.state === "playing" || status.videoUrl || status.videoType === "demo") {
+        standbyOverlay.classList.add("hidden");
+      }
+
+      if (status.videoType === "demo" && (!video.src || video.src === "" || video.src === window.location.href)) {
+        const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+        video.src = URL.createObjectURL(blob);
+        video.load();
+      } else if (status.videoUrl && video.src !== status.videoUrl) {
+        video.src = status.videoUrl;
+        video.load();
+      }
+
+      if (status.currentTime !== undefined && Math.abs(video.currentTime - status.currentTime) > 0.08) {
+        video.currentTime = status.currentTime;
+      }
+
+      if (status.playbackRate !== undefined) {
+        video.playbackRate = status.playbackRate;
+      }
+
+      if (status.isPlaying !== undefined) {
+        if (status.isPlaying && video.paused) {
+          video.play().catch(e => console.warn("自動播放限制:", e));
+        } else if (!status.isPlaying && !video.paused) {
+          video.pause();
+        }
+      }
+    });
+
+    syncManager.onDisplayOptsChange((opts) => {
+      console.log("收到顯示選項變更:", opts);
+      if (opts.showGhost !== undefined) vectorDrawer.showGhost = opts.showGhost;
+      if (opts.showVelocity !== undefined) vectorDrawer.showVelocity = opts.showVelocity;
+      if (opts.showAcceleration !== undefined) vectorDrawer.showAcceleration = opts.showAcceleration;
+      if (opts.vScale !== undefined) vectorDrawer.vScale = opts.vScale;
+      if (opts.aScale !== undefined) vectorDrawer.aScale = opts.aScale;
+    });
+
+    syncManager.onPhysicsDataChange((trajectory) => {
+      console.log(`收到軌跡物理數據，共 ${trajectory.length} 影格點`);
+      currentTrajectory = trajectory;
+      standbyOverlay.classList.add("hidden");
+    });
+
+    syncManager.onDrawEvent((drawEvent) => {
+      annotationLayer.receiveDrawEvent(drawEvent);
+    });
+
+    // 6. 核心渲染循環 (Render Loop)
+    function renderLoop() {
+      if (currentTrajectory && currentTrajectory.length > 0) {
+        const curTime = video.currentTime;
+        const pt = physicsEngine.interpolateAtTime(currentTrajectory, curTime);
+
+        if (pt) {
+          vectorDrawer.render(video, currentTrajectory, pt);
+          updateHud(pt);
+        }
+      }
+
+      requestAnimationFrame(renderLoop);
+    }
+    requestAnimationFrame(renderLoop);
+
+    function updateHud(pt) {
+      document.getElementById("hudTime").textContent = `${pt.t.toFixed(3)} s`;
+      document.getElementById("hudFrame").textContent = `Frame: ${pt.index !== undefined ? pt.index : '-'}`;
+      document.getElementById("hudPos").textContent = `${pt.meterX.toFixed(2)}, ${pt.meterY.toFixed(2)} m`;
+      document.getElementById("hudPixelPos").textContent = `${Math.round(pt.x)}, ${Math.round(pt.y)} px`;
+      document.getElementById("hudVelMag").textContent = `${pt.v.toFixed(2)} m/s`;
+      document.getElementById("hudVelComponents").textContent = `vx: ${pt.vx.toFixed(2)} | vy: ${pt.vy.toFixed(2)}`;
+      document.getElementById("hudAccMag").textContent = `${pt.a.toFixed(1)} m/s²`;
+      document.getElementById("hudAccComponents").textContent = `ax: ${pt.ax.toFixed(1)} | ay: ${pt.ay.toFixed(1)}`;
+    }
+
+    // 7. 互動事件綁定
+    document.getElementById("btnToggleHud").onclick = () => {
+      physicsHud.classList.toggle("hidden");
+    };
+
+    document.getElementById("btnClearDraw").onclick = () => {
+      annotationLayer.clear(true);
+    };
+
+    document.getElementById("btnFullscreen").onclick = () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    };
+
+    document.getElementById("btnOpenMobileTab").onclick = () => {
+      window.open(mobileUrl, "_blank");
+    };
+
+    // 示範模式：直接生成示範物理運動影片並分析
+    document.getElementById("btnLoadDemoDirectly").onclick = async () => {
+      const btn = document.getElementById("btnLoadDemoDirectly");
+      btn.textContent = "⏳ 正在生成示範影片...";
+      btn.disabled = true;
+
+      const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+      const url = URL.createObjectURL(blob);
+      video.src = url;
+      video.load();
+      await new Promise(r => video.onloadeddata = r);
+
+      // 自動執行快速分析
+      const tracker = new VideoTracker({ fps: 60 });
+      tracker.setTargetColor(255, 60, 40, 70); // 紅色球體
+      tracker.setScale(250, 1.0); // 250px = 1m
+      physicsEngine.setScale(250, 1.0);
+
+      const raw = await tracker.analyzeVideo(video);
+      const processed = physicsEngine.processTrajectory(raw);
+      currentTrajectory = processed;
+
+      standbyOverlay.classList.add("hidden");
+      video.loop = true;
+      video.playbackRate = 0.5;
+      video.play();
+    };
+
+    // Firebase 設定彈窗邏輯
+    const settingsModal = document.getElementById("settingsModal");
+    document.getElementById("btnSettings").onclick = () => {
+      settingsModal.classList.add("active");
+    };
+    document.getElementById("btnCloseSettings").onclick = () => {
+      settingsModal.classList.remove("active");
+    };
+    document.getElementById("btnSaveConfig").onclick = () => {
+      const cfg = {
+        apiKey: document.getElementById("cfgApiKey").value.trim(),
+        databaseURL: document.getElementById("cfgDbUrl").value.trim(),
+        projectId: document.getElementById("cfgProjectId").value.trim()
+      };
+      localStorage.setItem("physics_tracker_firebase_config", JSON.stringify(cfg));
+      syncManager.initFirebase(cfg).then(success => {
+        if (success) {
+          document.getElementById("connStatusBadge").textContent = "(Firebase 雲端已連線)";
+          document.getElementById("connStatusBadge").style.color = "#10b981";
+        }
+      });
+      settingsModal.classList.remove("active");
+    };
+
+    // 視窗尺寸變更時自動同步畫布
+    window.addEventListener("resize", () => {
+      vectorDrawer.syncSizeWithVideo(video);
+      annotationLayer.syncSize(video);
+    });
+  </script>
+</body>
+</html>
