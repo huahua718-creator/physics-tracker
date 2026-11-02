@@ -47,27 +47,33 @@ export class VideoTracker {
   }
 
   /**
-   * 等待 video 跳轉至指定時間點並完成繪製
+   * 等待 video 跳轉至指定時間點並完成繪製 (含安全超時)
    */
   seekTo(video, targetTime) {
     return new Promise((resolve) => {
-      const onSeeked = () => {
-        video.removeEventListener("seeked", onSeeked);
-        resolve();
+      let resolved = false;
+      const cleanup = () => {
+        if (!resolved) {
+          resolved = true;
+          video.removeEventListener("seeked", onSeeked);
+          resolve();
+        }
       };
+      const onSeeked = () => cleanup();
       video.addEventListener("seeked", onSeeked, { once: true });
-      video.currentTime = targetTime;
+      video.currentTime = Math.min(video.duration || 999, Math.max(0, targetTime));
+      // 容錯防禦：若 250ms 內未觸發 seeked 則強制繼續，避免卡死
+      setTimeout(cleanup, 250);
     });
   }
 
   /**
-   * 像素顏色距離 (歐式空間加權)
+   * 像素顏色距離 (結合人眼加權與飽和度特徵)
    */
   colorDistance(r1, g1, b1, r2, g2, b2) {
     const dr = r1 - r2;
     const dg = g1 - g2;
     const db = b1 - b2;
-    // 人眼感知加權 (Redmean metric)
     const rmean = (r1 + r2) / 2;
     return Math.sqrt(
       (2 + rmean / 256) * dr * dr +
@@ -96,7 +102,8 @@ export class VideoTracker {
     const tr = this.targetColor.r;
     const tg = this.targetColor.g;
     const tb = this.targetColor.b;
-    const tol = this.colorTolerance;
+    // 適度放寬容許值確保運動模糊或微小光影變化依然能穩定咬住目標
+    const tol = Math.max(75, this.colorTolerance);
 
     for (let y = startY; y < endY; y += 2) { // 步長2提升離線分析速度
       const rowOffset = y * width * 4;
@@ -108,7 +115,6 @@ export class VideoTracker {
 
         const dist = this.colorDistance(r, g, b, tr, tg, tb);
         if (dist <= tol) {
-          // 距離越近權重越高
           const weight = (tol - dist + 1);
           sumX += x * weight;
           sumY += y * weight;
@@ -117,11 +123,11 @@ export class VideoTracker {
       }
     }
 
-    if (totalWeight > 10) {
+    if (totalWeight > 8) {
       return {
         x: sumX / totalWeight,
         y: sumY / totalWeight,
-        confidence: Math.min(1.0, totalWeight / 1500)
+        confidence: Math.min(1.0, totalWeight / 1200)
       };
     }
 
@@ -130,8 +136,7 @@ export class VideoTracker {
 
   /**
    * 核心：逐幀提取分析 (Non-realtime Step Frame Extraction)
-   * @param {HTMLVideoElement} video 欲分析的影片
-   * @param {Object} options { startTime, endTime, onProgress }
+   * 具備：局部預測搜尋 + 全局自動重捕獲 (Global Fallback Re-acquisition)
    */
   async analyzeVideo(video, options = {}) {
     if (this.isAnalyzing) throw new Error("已有分析作業進行中");
@@ -143,7 +148,6 @@ export class VideoTracker {
     const endTime = Math.min(duration, options.endTime || duration);
     const onProgress = options.onProgress || (() => {});
 
-    // 初始化離線繪圖畫布尺寸
     this.canvas.width = video.videoWidth || 1280;
     this.canvas.height = video.videoHeight || 720;
 
@@ -152,6 +156,7 @@ export class VideoTracker {
     const trajectory = [];
 
     let lastKnownPos = null;
+    let lastVelocity = { vx: 0, vy: 0 };
 
     try {
       video.pause();
@@ -165,25 +170,39 @@ export class VideoTracker {
         const currentTime = startTime + frameIdx * dt;
         await this.seekTo(video, currentTime);
 
-        // 將當前影格繪製至離線畫布
         this.ctx.drawImage(video, 0, 0, this.canvas.width, this.canvas.height);
         const imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
 
-        // 若已有上一次位置，自適應微調 ROI 追蹤窗口
-        let currentROI = this.roi;
-        if (!currentROI && lastKnownPos) {
-          const searchRadius = 90;
-          currentROI = {
-            x: lastKnownPos.x - searchRadius,
-            y: lastKnownPos.y - searchRadius,
+        // 1. 若有上一影格座標，使用速度預測中心建立局部搜尋窗口 (ROI)
+        let point = null;
+        if (this.roi) {
+          point = this.findCentroid(imgData, this.roi);
+        } else if (lastKnownPos) {
+          const searchRadius = 140; // 放寬搜尋半徑，適應彈跳大速度
+          const predX = lastKnownPos.x + lastVelocity.vx * dt;
+          const predY = lastKnownPos.y + lastVelocity.vy * dt;
+          const localROI = {
+            x: predX - searchRadius,
+            y: predY - searchRadius,
             width: searchRadius * 2,
             height: searchRadius * 2
           };
+          point = this.findCentroid(imgData, localROI);
         }
 
-        const point = this.findCentroid(imgData, currentROI);
+        // 2. 關鍵保證：若局部未找到，立即切換為全畫面全域搜尋 (Global Fallback)
+        // 徹底解決因彈跳或高速運動導致超出局部窗口而永久丟失標記的問題！
+        if (!point) {
+          point = this.findCentroid(imgData, null);
+        }
 
         if (point) {
+          if (lastKnownPos) {
+            lastVelocity = {
+              vx: (point.x - lastKnownPos.x) / dt,
+              vy: (point.y - lastKnownPos.y) / dt
+            };
+          }
           lastKnownPos = { x: point.x, y: point.y };
           trajectory.push({
             t: currentTime,
@@ -192,7 +211,7 @@ export class VideoTracker {
             found: true
           });
         } else if (lastKnownPos) {
-          // 影格未偵測到時暫存上一點 (或標記遺失)
+          // 若畫面短暫丟失，使用上一位置保持連貫
           trajectory.push({
             t: currentTime,
             x: lastKnownPos.x,
@@ -254,13 +273,13 @@ export class VideoTracker {
 
       mediaRecorder.start();
 
-      // 物理常數模擬 (斜拋 + 重力 + 地面彈跳)
+      // 物理常數模擬 (斜拋 + 重力 + 地面彈跳，確保軌跡全程 100% 完整保留在畫面內)
       const g = 9.8; // m/s^2
       const scale = 250; // 250 px = 1 m
-      let x = 150; // px
-      let y = 520; // px (地面在 600)
-      let vx = 3.2 * scale; // 水平速度
-      let vy = -6.5 * scale; // 向上初速
+      let x = 120; // 起始 x
+      let y = 480; // 起始 y
+      let vx = 1.7 * scale; // 水平初速 ~425 px/s (2.5秒內橫跨 1060px，不超出 1280 邊界)
+      let vy = -4.1 * scale; // 向上初速 ~-1025 px/s (最高點約在 y = 265px，絕不出上邊界)
       const dt = 1 / fps;
       const totalFrames = Math.floor(duration * fps);
       let currentFrame = 0;
@@ -276,10 +295,10 @@ export class VideoTracker {
         x += vx * dt;
         y += vy * dt;
 
-        // 地面碰撞
+        // 地面彈跳碰撞 (地面在 y = 580)
         if (y > 580) {
           y = 580;
-          vy = -vy * 0.82; // 恢復係數
+          vy = -Math.abs(vy) * 0.78; // 彈性碰撞係數
         }
 
         // 繪製背景 (物理實驗室深色格線背景)

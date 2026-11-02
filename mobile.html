@@ -378,15 +378,38 @@
       const clickX = (e.clientX - rect.left) * scaleX;
       const clickY = (e.clientY - rect.top) * scaleY;
 
-      // 若尚未設定尺標兩點，優先取色
-      const imgData = previewCtx.getImageData(Math.floor(clickX), Math.floor(clickY), 1, 1).data;
-      const r = imgData[0], g = imgData[1], b = imgData[2];
+      // 智慧取色：在點擊點周圍 9x9 區域內取最具色彩飽和度的像素 (自動排除白色反光高光與深色邊緣)
+      const sampleRadius = 4;
+      const sx = Math.max(0, Math.floor(clickX - sampleRadius));
+      const sy = Math.max(0, Math.floor(clickY - sampleRadius));
+      const sWidth = Math.min(previewCanvas.width - sx, sampleRadius * 2 + 1);
+      const sHeight = Math.min(previewCanvas.height - sy, sampleRadius * 2 + 1);
+      const imgData = previewCtx.getImageData(sx, sy, sWidth, sHeight).data;
 
-      videoTracker.setTargetColor(r, g, b, 65);
-      document.getElementById("colorSwatch").style.background = `rgb(${r}, ${g}, ${b})`;
-      document.getElementById("colorRgbText").textContent = `(${r}, ${g}, ${b})`;
+      let bestR = imgData[0], bestG = imgData[1], bestB = imgData[2];
+      let maxSaturation = -1;
 
-      document.getElementById("previewHint").textContent = `已鎖定顏色 (${r},${g},${b})`;
+      for (let i = 0; i < imgData.length; i += 4) {
+        const pr = imgData[i], pg = imgData[i + 1], pb = imgData[i + 2];
+        const maxVal = Math.max(pr, pg, pb);
+        const minVal = Math.min(pr, pg, pb);
+        const sat = maxVal > 0 ? (maxVal - minVal) / maxVal : 0;
+        // 排除純白高光 (r, g, b > 215) 與過暗陰影
+        if (maxVal > 40 && !(pr > 215 && pg > 215 && pb > 215)) {
+          if (sat > maxSaturation) {
+            maxSaturation = sat;
+            bestR = pr;
+            bestG = pg;
+            bestB = pb;
+          }
+        }
+      }
+
+      videoTracker.setTargetColor(bestR, bestG, bestB, 80);
+      document.getElementById("colorSwatch").style.background = `rgb(${bestR}, ${bestG}, ${bestB})`;
+      document.getElementById("colorRgbText").textContent = `(${bestR}, ${bestG}, ${bestB})`;
+
+      document.getElementById("previewHint").textContent = `已鎖定顏色 (${bestR},${bestG},${bestB})`;
     };
 
     // 5. 離線逐幀質心分析
