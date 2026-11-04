@@ -14,7 +14,7 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
   </style>
-  <link rel="stylesheet" href="/css/screen.css">
+  <link rel="stylesheet" href="./css/screen.css">
   <!-- 引入 QR Code 輕量生成庫 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -247,12 +247,12 @@
   </div>
 
   <script type="module">
-    import { SyncManager } from "/js/firebase-config.js";
-    import { PhysicsEngine } from "/js/physics-engine.js";
-    import { VectorDrawer } from "/js/vector-drawer.js";
-    import { AnnotationLayer } from "/js/annotation.js";
-    import { VideoTracker } from "/js/video-tracker.js";
-    import { PhysicsChart } from "/js/physics-chart.js";
+    import { SyncManager } from "./js/firebase-config.js";
+    import { PhysicsEngine } from "./js/physics-engine.js";
+    import { VectorDrawer } from "./js/vector-drawer.js";
+    import { AnnotationLayer } from "./js/annotation.js";
+    import { VideoTracker } from "./js/video-tracker.js";
+    import { PhysicsChart } from "./js/physics-chart.js";
 
     // 1. 初始化房間 PIN 碼 (取 URL 參數或隨機 6 碼)
     const urlParams = new URLSearchParams(window.location.search);
