@@ -23,6 +23,12 @@
     </div>
 
     <div class="top-actions">
+      <button class="btn-icon" id="btnToggleChart" title="顯示/隱藏物理圖表">
+        📈 物理圖表
+      </button>
+      <button class="btn-icon" id="btnToggleDraw" title="切換大屏繪圖工具列">
+        ✏️ 繪圖白板
+      </button>
       <button class="btn-icon" id="btnToggleHud" title="顯示/隱藏物理數據儀表板">
         📊 數據儀表
       </button>
@@ -76,6 +82,81 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- 大屏端即時繪圖工具列 (可直接在大屏上切換畫筆/顏色/手寫標註) -->
+    <div class="screen-draw-toolbar" id="screenDrawToolbar">
+      <button class="draw-tool-btn active" id="sdtTogglePen" title="切換繪圖模式 (開/關)">
+        ✏️
+      </button>
+      <div class="sdt-divider"></div>
+
+      <div class="sdt-colors">
+        <div class="sdt-color-dot active" style="background: #ef4444;" data-color="#ef4444" title="紅色"></div>
+        <div class="sdt-color-dot" style="background: #f59e0b;" data-color="#f59e0b" title="黃色"></div>
+        <div class="sdt-color-dot" style="background: #10b981;" data-color="#10b981" title="綠色"></div>
+        <div class="sdt-color-dot" style="background: #38bdf8;" data-color="#38bdf8" title="青藍色"></div>
+        <div class="sdt-color-dot" style="background: #ffffff;" data-color="#ffffff" title="白色"></div>
+      </div>
+      <div class="sdt-divider"></div>
+
+      <button class="draw-tool-btn sdt-size-btn" data-size="3" title="細筆觸 (3px)">3</button>
+      <button class="draw-tool-btn sdt-size-btn active" data-size="6" title="中筆觸 (6px)">6</button>
+      <button class="draw-tool-btn sdt-size-btn" data-size="12" title="粗筆觸 (12px)">12</button>
+      <div class="sdt-divider"></div>
+
+      <button class="draw-tool-btn" id="sdtEraser" title="橡皮擦">🧽</button>
+      <button class="draw-tool-btn" id="sdtUndo" title="復原上一筆 (Undo)">↩️</button>
+      <button class="draw-tool-btn" id="sdtClear" title="清除全部筆跡">🧹</button>
+    </div>
+
+    <!-- 大屏端即時物理圖表面板 (x-t / y-t, v-t, a-t 與 X/Y 分量切換，隨播放動態繪製) -->
+    <div class="physics-chart-panel" id="physicsChartPanel">
+      <div class="chart-header">
+        <div class="chart-tabs">
+          <button class="chart-tab-btn active" data-chart="xt">位移 x-t / y-t</button>
+          <button class="chart-tab-btn" data-chart="vt">速度 v-t</button>
+          <button class="chart-tab-btn" data-chart="at">加速度 a-t</button>
+        </div>
+
+        <div class="chart-controls">
+          <select class="chart-select-filter" id="chartAxisFilter" title="分量顯示篩選">
+            <option value="all">全部分量</option>
+            <option value="x">僅 X 軸 (水平)</option>
+            <option value="y">僅 Y 軸 (垂直)</option>
+          </select>
+          <button class="chart-btn-icon" id="btnToggleChartMode" title="切換動態繪製 / 全曲線模式">⚡</button>
+          <button class="chart-btn-icon" id="btnMinimizeChart" title="最小化 / 展開圖表">_</button>
+          <button class="chart-btn-icon" id="btnCloseChart" title="隱藏圖表">✕</button>
+        </div>
+      </div>
+      <div class="chart-body">
+        <canvas id="physicsChartCanvas"></canvas>
+      </div>
+    </div>
+
+    <!-- 大屏端影片播放控制列 (獨立播放、拖曳進度、倍速切換) -->
+    <div class="screen-playback-bar" id="screenPlaybackBar">
+      <button class="spb-btn spb-play-main" id="spbPlayPause" title="播放 / 暫停">
+        <span id="spbPlayIcon">▶</span>
+      </button>
+      <button class="spb-btn" id="spbStepBack" title="上一影格 (-1 幀)">⏮️</button>
+      <button class="spb-btn" id="spbStepForward" title="下一影格 (+1 幀)">⏭️</button>
+
+      <span class="spb-time spb-current" id="spbCurrentTime">0.00 s</span>
+      <div class="spb-scrubber-box">
+        <input type="range" class="spb-scrubber" id="spbScrubber" min="0" max="1" step="0.001" value="0">
+      </div>
+      <span class="spb-time" id="spbTotalDuration">0.00 s</span>
+
+      <div class="spb-speed-group">
+        <button class="spb-chip" data-speed="0.1">0.1x</button>
+        <button class="spb-chip" data-speed="0.25">0.25x</button>
+        <button class="spb-chip active" data-speed="0.5">0.5x</button>
+        <button class="spb-chip" data-speed="1.0">1.0x</button>
+      </div>
+
+      <button class="spb-btn active" id="spbToggleLoop" title="循環播放切換">🔁</button>
     </div>
 
     <!-- 浮動圖例說明 (Legend) -->
@@ -161,6 +242,7 @@
     import { VectorDrawer } from "./js/vector-drawer.js";
     import { AnnotationLayer } from "./js/annotation.js";
     import { VideoTracker } from "./js/video-tracker.js";
+    import { PhysicsChart } from "./js/physics-chart.js";
 
     // 1. 初始化房間 PIN 碼 (取 URL 參數或隨機 6 碼)
     const urlParams = new URLSearchParams(window.location.search);
@@ -189,14 +271,25 @@
     const annotationCanvas = document.getElementById("annotationCanvas");
     const standbyOverlay = document.getElementById("standbyOverlay");
     const physicsHud = document.getElementById("physicsHud");
+    const physicsChartPanel = document.getElementById("physicsChartPanel");
+    const screenDrawToolbar = document.getElementById("screenDrawToolbar");
+    const screenPlaybackBar = document.getElementById("screenPlaybackBar");
 
     // 4. 初始化核心子系統
     const physicsEngine = new PhysicsEngine();
     const vectorDrawer = new VectorDrawer(vectorCanvas);
     const annotationLayer = new AnnotationLayer(annotationCanvas, {
+      enabled: true,
+      color: "#ef4444",
+      lineWidth: 6,
       onDrawEvent: (e) => syncManager.sendDrawEvent(e)
     });
     const syncManager = new SyncManager(screenId, "screen");
+    const physicsChart = new PhysicsChart(document.getElementById("physicsChartCanvas"), {
+      type: "xt",
+      axisFilter: "all",
+      drawMode: "dynamic"
+    });
 
     let currentTrajectory = [];
 
@@ -222,6 +315,7 @@
 
       if (status.playbackRate !== undefined) {
         video.playbackRate = status.playbackRate;
+        updateSpeedChips(status.playbackRate);
       }
 
       if (status.isPlaying !== undefined) {
@@ -245,6 +339,7 @@
     syncManager.onPhysicsDataChange((trajectory) => {
       console.log(`收到軌跡物理數據，共 ${trajectory.length} 影格點`);
       currentTrajectory = trajectory;
+      physicsChart.setData(trajectory, video.duration);
       standbyOverlay.classList.add("hidden");
     });
 
@@ -261,6 +356,11 @@
         if (pt) {
           vectorDrawer.render(video, currentTrajectory, pt);
           updateHud(pt);
+        }
+
+        // 即時繪製物理圖表 (隨著影片播放動態掃描更新)
+        if (!physicsChartPanel.classList.contains("hidden") && !physicsChartPanel.classList.contains("minimized")) {
+          physicsChart.render(curTime);
         }
       }
 
@@ -279,7 +379,198 @@
       document.getElementById("hudAccComponents").textContent = `ax: ${pt.ax.toFixed(1)} | ay: ${pt.ay.toFixed(1)}`;
     }
 
-    // 7. 互動事件綁定
+    // 7. 影片播放控制列 (Playback Bar) 邏輯
+    const spbPlayPause = document.getElementById("spbPlayPause");
+    const spbPlayIcon = document.getElementById("spbPlayIcon");
+    const spbStepBack = document.getElementById("spbStepBack");
+    const spbStepForward = document.getElementById("spbStepForward");
+    const spbCurrentTime = document.getElementById("spbCurrentTime");
+    const spbTotalDuration = document.getElementById("spbTotalDuration");
+    const spbScrubber = document.getElementById("spbScrubber");
+    const spbToggleLoop = document.getElementById("spbToggleLoop");
+
+    video.loop = true; // 預設循環播放
+
+    spbPlayPause.onclick = () => {
+      if (video.paused) {
+        video.play().catch(e => console.warn(e));
+      } else {
+        video.pause();
+      }
+    };
+
+    video.addEventListener("play", () => {
+      spbPlayIcon.textContent = "⏸";
+      syncManager.updateStatus({ isPlaying: true, currentTime: video.currentTime });
+    });
+
+    video.addEventListener("pause", () => {
+      spbPlayIcon.textContent = "▶";
+      syncManager.updateStatus({ isPlaying: false, currentTime: video.currentTime });
+    });
+
+    video.addEventListener("timeupdate", () => {
+      spbScrubber.value = video.currentTime;
+      spbCurrentTime.textContent = `${video.currentTime.toFixed(2)} s`;
+    });
+
+    video.addEventListener("loadeddata", () => {
+      const dur = video.duration || 1;
+      spbScrubber.max = dur;
+      spbTotalDuration.textContent = `${dur.toFixed(2)} s`;
+      physicsChart.setData(currentTrajectory, dur);
+    });
+
+    spbScrubber.addEventListener("input", (e) => {
+      const t = Number(e.target.value);
+      video.currentTime = t;
+      spbCurrentTime.textContent = `${t.toFixed(2)} s`;
+      physicsChart.render(t);
+      syncManager.updateStatus({ currentTime: t });
+    });
+
+    spbStepBack.onclick = () => {
+      video.pause();
+      const dt = 1 / 60;
+      video.currentTime = Math.max(0, video.currentTime - dt);
+      syncManager.updateStatus({ currentTime: video.currentTime, isPlaying: false });
+    };
+
+    spbStepForward.onclick = () => {
+      video.pause();
+      const dt = 1 / 60;
+      video.currentTime = Math.min(video.duration || 10, video.currentTime + dt);
+      syncManager.updateStatus({ currentTime: video.currentTime, isPlaying: false });
+    };
+
+    function updateSpeedChips(speed) {
+      document.querySelectorAll(".spb-chip").forEach(chip => {
+        if (Math.abs(Number(chip.dataset.speed) - speed) < 0.01) {
+          chip.classList.add("active");
+        } else {
+          chip.classList.remove("active");
+        }
+      });
+    }
+
+    document.querySelectorAll(".spb-chip").forEach(chip => {
+      chip.onclick = () => {
+        const speed = Number(chip.dataset.speed);
+        video.playbackRate = speed;
+        updateSpeedChips(speed);
+        syncManager.updateStatus({ playbackRate: speed });
+      };
+    });
+
+    spbToggleLoop.onclick = () => {
+      video.loop = !video.loop;
+      spbToggleLoop.classList.toggle("active", video.loop);
+    };
+
+    // 8. 大屏端繪圖工具列 (Drawing Toolbar) 邏輯
+    const sdtTogglePen = document.getElementById("sdtTogglePen");
+    const sdtEraser = document.getElementById("sdtEraser");
+    const sdtUndo = document.getElementById("sdtUndo");
+    const sdtClear = document.getElementById("sdtClear");
+
+    sdtTogglePen.onclick = () => {
+      const willEnable = !annotationLayer.enabled;
+      annotationLayer.setEnabled(willEnable);
+      sdtTogglePen.classList.toggle("active", willEnable);
+      if (willEnable) {
+        annotationLayer.setMode("pen");
+        sdtEraser.classList.remove("active");
+      }
+    };
+
+    document.querySelectorAll(".sdt-color-dot").forEach(dot => {
+      dot.onclick = () => {
+        document.querySelectorAll(".sdt-color-dot").forEach(d => d.classList.remove("active"));
+        dot.classList.add("active");
+        annotationLayer.setColor(dot.dataset.color);
+        annotationLayer.setMode("pen");
+        sdtEraser.classList.remove("active");
+      };
+    });
+
+    document.querySelectorAll(".sdt-size-btn").forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll(".sdt-size-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        annotationLayer.setSize(Number(btn.dataset.size));
+      };
+    });
+
+    sdtEraser.onclick = () => {
+      if (annotationLayer.mode === "eraser") {
+        annotationLayer.setMode("pen");
+        sdtEraser.classList.remove("active");
+      } else {
+        annotationLayer.setMode("eraser");
+        sdtEraser.classList.add("active");
+      }
+    };
+
+    sdtUndo.onclick = () => {
+      annotationLayer.undo(true);
+    };
+
+    sdtClear.onclick = () => {
+      annotationLayer.clear(true);
+    };
+
+    // 9. 物理圖表面板 (Physics Chart) 控制邏輯
+    document.querySelectorAll(".chart-tab-btn").forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll(".chart-tab-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        physicsChart.setType(btn.dataset.chart);
+        physicsChart.render(video.currentTime);
+      };
+    });
+
+    const chartAxisFilter = document.getElementById("chartAxisFilter");
+    chartAxisFilter.onchange = () => {
+      physicsChart.setAxisFilter(chartAxisFilter.value);
+      physicsChart.render(video.currentTime);
+    };
+
+    const btnToggleChartMode = document.getElementById("btnToggleChartMode");
+    btnToggleChartMode.onclick = () => {
+      const newMode = physicsChart.drawMode === "dynamic" ? "full" : "dynamic";
+      physicsChart.setDrawMode(newMode);
+      btnToggleChartMode.title = newMode === "dynamic" ? "目前：動態繪製模式 (點擊切換為全曲線)" : "目前：全曲線模式 (點擊切換為動態繪製)";
+      btnToggleChartMode.style.color = newMode === "dynamic" ? "#38bdf8" : "#f59e0b";
+      physicsChart.render(video.currentTime);
+    };
+
+    const btnMinimizeChart = document.getElementById("btnMinimizeChart");
+    btnMinimizeChart.onclick = () => {
+      physicsChartPanel.classList.toggle("minimized");
+      btnMinimizeChart.textContent = physicsChartPanel.classList.contains("minimized") ? "□" : "_";
+      if (!physicsChartPanel.classList.contains("minimized")) {
+        setTimeout(() => physicsChart.render(video.currentTime), 200);
+      }
+    };
+
+    const btnCloseChart = document.getElementById("btnCloseChart");
+    btnCloseChart.onclick = () => {
+      physicsChartPanel.classList.add("hidden");
+    };
+
+    document.getElementById("btnToggleChart").onclick = () => {
+      physicsChartPanel.classList.toggle("hidden");
+      if (!physicsChartPanel.classList.contains("hidden")) {
+        physicsChartPanel.classList.remove("minimized");
+        setTimeout(() => physicsChart.render(video.currentTime), 150);
+      }
+    };
+
+    document.getElementById("btnToggleDraw").onclick = () => {
+      screenDrawToolbar.classList.toggle("hidden");
+    };
+
+    // 10. 頂部列其他事件綁定
     document.getElementById("btnToggleHud").onclick = () => {
       physicsHud.classList.toggle("hidden");
     };
@@ -306,26 +597,40 @@
       btn.textContent = "⏳ 正在生成示範影片...";
       btn.disabled = true;
 
-      const blob = await VideoTracker.generateDemoVideo(2.5, 60);
-      const url = URL.createObjectURL(blob);
-      video.src = url;
-      video.load();
-      await new Promise(r => video.onloadeddata = r);
+      try {
+        const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+        const url = URL.createObjectURL(blob);
+        video.src = url;
+        video.load();
+        await new Promise(r => {
+          if (video.readyState >= 2) return r();
+          video.onloadeddata = r;
+          setTimeout(r, 1000);
+        });
 
-      // 自動執行快速分析
-      const tracker = new VideoTracker({ fps: 60 });
-      tracker.setTargetColor(255, 60, 40, 70); // 紅色球體
-      tracker.setScale(250, 1.0); // 250px = 1m
-      physicsEngine.setScale(250, 1.0);
+        // 自動執行快速分析
+        const tracker = new VideoTracker({ fps: 60 });
+        tracker.setTargetColor(255, 60, 40, 70); // 紅色球體
+        tracker.setScale(250, 1.0); // 250px = 1m
+        physicsEngine.setScale(250, 1.0);
 
-      const raw = await tracker.analyzeVideo(video);
-      const processed = physicsEngine.processTrajectory(raw);
-      currentTrajectory = processed;
+        const raw = await tracker.analyzeVideo(video);
+        const processed = physicsEngine.processTrajectory(raw);
+        currentTrajectory = processed;
+        physicsChart.setData(processed, video.duration);
 
-      standbyOverlay.classList.add("hidden");
-      video.loop = true;
-      video.playbackRate = 0.5;
-      video.play();
+        standbyOverlay.classList.add("hidden");
+        video.loop = true;
+        video.playbackRate = 0.5;
+        updateSpeedChips(0.5);
+        video.play().catch(e => console.warn(e));
+      } catch (err) {
+        console.error("生成示範影片失敗:", err);
+        alert("載入示範影片失敗: " + (err.message || err));
+      } finally {
+        btn.textContent = "🧪 載入拋體示範影片";
+        btn.disabled = false;
+      }
     };
 
     // Firebase 設定彈窗邏輯
@@ -356,6 +661,10 @@
     window.addEventListener("resize", () => {
       vectorDrawer.syncSizeWithVideo(video);
       annotationLayer.syncSize(video);
+      physicsChart.syncSize();
+      if (currentTrajectory.length > 0) {
+        physicsChart.render(video.currentTime);
+      }
     });
   </script>
 </body>

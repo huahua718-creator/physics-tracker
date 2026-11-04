@@ -52,6 +52,17 @@
           <span>🎯 2. 標定目標與尺標</span>
           <span style="font-size: 0.75rem; color: #38bdf8;" id="previewHint">請點擊球體取色</span>
         </div>
+
+        <!-- 模式切換鈕 -->
+        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+          <button class="btn btn-primary" id="btnModePickColor" style="flex: 1; padding: 6px 8px; font-size: 0.8rem;">
+            🎯 點擊取色模式
+          </button>
+          <button class="btn btn-secondary" id="btnModeSetRuler" style="flex: 1; padding: 6px 8px; font-size: 0.8rem;">
+            📏 兩點標定尺標
+          </button>
+        </div>
+
         <div class="preview-container">
           <video id="mobileVideo" playsinline preload="auto"></video>
           <canvas id="previewCanvas"></canvas>
@@ -69,6 +80,14 @@
         <div class="form-row">
           <div class="form-label">尺標實際長度 (m)：</div>
           <input type="number" class="form-input-number" id="inputRealLength" value="1.0" step="0.1" min="0.01">
+        </div>
+
+        <div class="form-row">
+          <div class="form-label">尺標像素距離 (px)：</div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <input type="number" class="form-input-number" id="inputPixelLength" value="250" step="1" min="1" style="width: 90px;">
+            <span style="font-size: 0.75rem; color: #38bdf8; font-family: monospace;" id="pixelRatioHint">1 px ≈ 0.004 m</span>
+          </div>
         </div>
 
         <div class="form-row">
@@ -312,23 +331,30 @@
       btn.textContent = "⏳ 生成中...";
       btn.disabled = true;
 
-      const blob = await VideoTracker.generateDemoVideo(2.5, 60);
-      const url = URL.createObjectURL(blob);
-      loadVideoUrl(url, "demo");
-
-      btn.textContent = "🧪 示範拋體影片";
-      btn.disabled = false;
+      try {
+        const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+        const url = URL.createObjectURL(blob);
+        loadVideoUrl(url, "demo");
+      } catch (err) {
+        console.error("生成示範影片失敗:", err);
+        alert("生成示範影片失敗: " + (err.message || err));
+      } finally {
+        btn.textContent = "🧪 示範拋體影片";
+        btn.disabled = false;
+      }
     };
 
     function loadVideoUrl(url, videoType = "custom") {
       mobileVideo.src = url;
       mobileVideo.load();
-      mobileVideo.onloadeddata = () => {
-        previewCanvas.width = mobileVideo.videoWidth;
-        previewCanvas.height = mobileVideo.videoHeight;
+
+      const onVideoReady = () => {
+        previewCanvas.width = mobileVideo.videoWidth || 640;
+        previewCanvas.height = mobileVideo.videoHeight || 360;
         drawPreviewFrame();
-        document.getElementById("remoteTotalDuration").textContent = `${mobileVideo.duration.toFixed(2)} s`;
-        document.getElementById("remoteScrubber").max = mobileVideo.duration;
+        const dur = (mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 2.5;
+        document.getElementById("remoteTotalDuration").textContent = `${dur.toFixed(2)} s`;
+        document.getElementById("remoteScrubber").max = dur;
 
         // 同步通知大屏
         syncManager.updateStatus({
@@ -340,6 +366,9 @@
           isPlaying: false
         });
       };
+
+      mobileVideo.onloadeddata = onVideoReady;
+      mobileVideo.onloadedmetadata = onVideoReady;
     }
 
     function drawPreviewFrame() {
@@ -369,6 +398,39 @@
     }
 
     // 4. 取色與尺標點擊互動
+    let calibrationMode = "color"; // "color" | "ruler"
+    const btnModePickColor = document.getElementById("btnModePickColor");
+    const btnModeSetRuler = document.getElementById("btnModeSetRuler");
+    const inputRealLength = document.getElementById("inputRealLength");
+    const inputPixelLength = document.getElementById("inputPixelLength");
+    const pixelRatioHint = document.getElementById("pixelRatioHint");
+
+    function updateRatioDisplay() {
+      const realL = Number(inputRealLength.value) || 1.0;
+      const pxL = Number(inputPixelLength.value) || 250;
+      if (pxL > 0) {
+        pixelRatioHint.textContent = `1 px ≈ ${(realL / pxL).toFixed(4)} m`;
+      }
+    }
+    inputRealLength.oninput = updateRatioDisplay;
+    inputPixelLength.oninput = updateRatioDisplay;
+
+    btnModePickColor.onclick = () => {
+      calibrationMode = "color";
+      btnModePickColor.className = "btn btn-primary";
+      btnModeSetRuler.className = "btn btn-secondary";
+      document.getElementById("previewHint").textContent = "請點擊球體取色";
+    };
+
+    btnModeSetRuler.onclick = () => {
+      calibrationMode = "ruler";
+      btnModeSetRuler.className = "btn btn-primary";
+      btnModePickColor.className = "btn btn-secondary";
+      scalePoints = [];
+      drawPreviewFrame();
+      document.getElementById("previewHint").textContent = "請在畫布上依序點擊尺標兩端 (P1, P2)";
+    };
+
     previewCanvas.onclick = (e) => {
       if (!mobileVideo.videoWidth) return;
 
@@ -377,6 +439,24 @@
       const scaleY = previewCanvas.height / rect.height;
       const clickX = (e.clientX - rect.left) * scaleX;
       const clickY = (e.clientY - rect.top) * scaleY;
+
+      if (calibrationMode === "ruler") {
+        if (scalePoints.length >= 2) {
+          scalePoints = [];
+        }
+        scalePoints.push({ x: clickX, y: clickY });
+        drawPreviewFrame();
+
+        if (scalePoints.length === 1) {
+          document.getElementById("previewHint").textContent = `已標定 P1 (${Math.round(clickX)}, ${Math.round(clickY)})，請點擊 P2`;
+        } else if (scalePoints.length === 2) {
+          const pxDist = Math.hypot(scalePoints[1].x - scalePoints[0].x, scalePoints[1].y - scalePoints[0].y);
+          inputPixelLength.value = Math.max(1, Math.round(pxDist));
+          updateRatioDisplay();
+          document.getElementById("previewHint").textContent = `尺標已標定: ${Math.round(pxDist)} px`;
+        }
+        return;
+      }
 
       // 智慧取色：在點擊點周圍 9x9 區域內取最具色彩飽和度的像素 (自動排除白色反光高光與深色邊緣)
       const sampleRadius = 4;
@@ -414,46 +494,66 @@
 
     // 5. 離線逐幀質心分析
     document.getElementById("btnStartAnalysis").onclick = async () => {
+      const btn = document.getElementById("btnStartAnalysis");
       if (!mobileVideo.src) {
-        alert("請先選取影片或生成示範影片！");
+        alert("請先點擊上方「📁 選取手機影片」或「🧪 示範拋體影片」載入影片！");
         return;
       }
 
-      const fps = Number(document.getElementById("selectFps").value);
-      const realLen = Number(document.getElementById("inputRealLength").value) || 1.0;
+      btn.disabled = true;
+      btn.textContent = "⏳ 正在分析軌跡中...";
 
-      videoTracker.setFPS(fps);
+      try {
+        const fps = Number(document.getElementById("selectFps").value);
+        const realLen = Number(document.getElementById("inputRealLength").value) || 1.0;
+        const scalePx = Number(document.getElementById("inputPixelLength").value) || 250;
 
-      // 預設示範尺標 (若無自訂則預設 250px = 1m)
-      const scalePx = 250;
-      physicsEngine.setScale(scalePx, realLen);
+        videoTracker.setFPS(fps);
+        videoTracker.setScale(scalePx, realLen);
+        physicsEngine.setScale(scalePx, realLen);
 
-      const progressBox = document.getElementById("analysisProgressBox");
-      const progressBar = document.getElementById("progressBar");
-      const progressText = document.getElementById("progressText");
-      const progressFrames = document.getElementById("progressFrames");
-      const resultBox = document.getElementById("analysisResultBox");
+        const progressBox = document.getElementById("analysisProgressBox");
+        const progressBar = document.getElementById("progressBar");
+        const progressText = document.getElementById("progressText");
+        const progressFrames = document.getElementById("progressFrames");
+        const resultBox = document.getElementById("analysisResultBox");
 
-      progressBox.style.display = "block";
-      resultBox.style.display = "none";
+        progressBox.style.display = "block";
+        resultBox.style.display = "none";
 
-      const rawPoints = await videoTracker.analyzeVideo(mobileVideo, {
-        onProgress: (p) => {
-          progressBar.style.width = `${p.percent}%`;
-          progressText.textContent = `逐幀提取中... ${p.percent}%`;
-          progressFrames.textContent = `${p.currentFrame} / ${p.totalFrames} 幀`;
+        const rawPoints = await videoTracker.analyzeVideo(mobileVideo, {
+          onProgress: (p) => {
+            progressBar.style.width = `${p.percent}%`;
+            progressText.textContent = `逐幀提取中... ${p.percent}%`;
+            progressFrames.textContent = `${p.currentFrame} / ${p.totalFrames} 幀`;
+          }
+        });
+
+        if (!rawPoints || rawPoints.length === 0) {
+          alert("⚠️ 未能在影片中追蹤到目標色彩！\n請先在預覽畫面中點擊紅球進行「取色」，再點擊開始分析。");
+          progressBox.style.display = "none";
+          return;
         }
-      });
 
-      // 執行 Savitzky-Golay 平滑化與物理微分求導 (v, a)
-      processedTrajectory = physicsEngine.processTrajectory(rawPoints);
+        // 執行 Savitzky-Golay 平滑化與物理微分求導 (v, a)
+        processedTrajectory = physicsEngine.processTrajectory(rawPoints);
 
-      progressBox.style.display = "none";
-      resultBox.style.display = "block";
+        progressBox.style.display = "none";
+        resultBox.style.display = "block";
 
-      const maxV = Math.max(...processedTrajectory.map(p => p.v)).toFixed(2);
-      document.getElementById("resultSummaryText").textContent =
-        `共解析 ${processedTrajectory.length} 影格點，最大速度 ${maxV} m/s。已由 Savitzky-Golay 濾波完成微積分平滑！`;
+        const maxV = (processedTrajectory && processedTrajectory.length > 0)
+          ? Math.max(...processedTrajectory.map(p => p.v || 0)).toFixed(2)
+          : "0.00";
+
+        document.getElementById("resultSummaryText").textContent =
+          `共解析 ${processedTrajectory.length} 影格點，最大速度 ${maxV} m/s。已由 Savitzky-Golay 濾波完成微積分平滑！`;
+      } catch (err) {
+        console.error("逐幀分析出錯:", err);
+        alert("逐幀分析失敗: " + (err.message || err));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "🚀 開始逐幀分析軌跡";
+      }
     };
 
     // 6. 同步物理數據至大屏

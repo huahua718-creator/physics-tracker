@@ -28,6 +28,17 @@ export class VideoTracker {
   }
 
   /**
+   * 設定尺標比例
+   * @param {number} pixelDistance 畫布上的像素距離
+   * @param {number} realDistanceMeters 現實世界長度 (公尺)
+   */
+  setScale(pixelDistance, realDistanceMeters) {
+    this.pixelDistance = pixelDistance > 0 ? pixelDistance : 250;
+    this.realWorldLength = realDistanceMeters > 0 ? realDistanceMeters : 1.0;
+    return this.realWorldLength / this.pixelDistance;
+  }
+
+  /**
    * 設定目標追蹤顏色
    */
   setTargetColor(r, g, b, tolerance = 60) {
@@ -61,7 +72,8 @@ export class VideoTracker {
       };
       const onSeeked = () => cleanup();
       video.addEventListener("seeked", onSeeked, { once: true });
-      video.currentTime = Math.min(video.duration || 999, Math.max(0, targetTime));
+      const maxT = (video.duration && isFinite(video.duration)) ? video.duration : 999;
+      video.currentTime = Math.min(maxT, Math.max(0, targetTime));
       // 容錯防禦：若 250ms 內未觸發 seeked 則強制繼續，避免卡死
       setTimeout(cleanup, 250);
     });
@@ -143,7 +155,19 @@ export class VideoTracker {
     this.isAnalyzing = true;
     this.cancelRequested = false;
 
-    const duration = video.duration || 5;
+    // 確保 video metadata 已就緒
+    if (video.readyState < 1) {
+      await new Promise((res) => {
+        video.addEventListener("loadedmetadata", res, { once: true });
+        setTimeout(res, 800);
+      });
+    }
+
+    let duration = video.duration;
+    if (!duration || isNaN(duration) || !isFinite(duration) || duration <= 0) {
+      duration = 2.5;
+    }
+
     const startTime = Math.max(0, options.startTime || 0);
     const endTime = Math.min(duration, options.endTime || duration);
     const onProgress = options.onProgress || (() => {});
@@ -255,19 +279,27 @@ export class VideoTracker {
       const ctx = canvas.getContext("2d");
 
       const stream = canvas.captureStream(fps);
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-          ? "video/webm;codecs=vp9"
-          : "video/webm"
-      });
+      let mimeType = "";
+      if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported) {
+        if (MediaRecorder.isTypeSupported("video/mp4")) {
+          mimeType = "video/mp4";
+        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
+          mimeType = "video/webm;codecs=vp9";
+        } else if (MediaRecorder.isTypeSupported("video/webm")) {
+          mimeType = "video/webm";
+        }
+      }
+      const recorderOptions = mimeType ? { mimeType } : undefined;
+      const mediaRecorder = recorderOptions ? new MediaRecorder(stream, recorderOptions) : new MediaRecorder(stream);
 
       const chunks = [];
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
+        if (e.data && e.data.size > 0) chunks.push(e.data);
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "video/webm" });
+        const actualType = mimeType || "video/webm";
+        const blob = new Blob(chunks, { type: actualType });
         resolve(blob);
       };
 

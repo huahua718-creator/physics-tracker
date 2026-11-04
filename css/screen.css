@@ -261,16 +261,16 @@ body {
 /* 浮動物理儀表板 (HUD Dashboard) */
 .physics-hud {
   position: absolute;
-  bottom: 24px;
+  bottom: 84px;
   left: 24px;
   background: var(--surface-color);
   backdrop-filter: blur(12px);
   border: 1px solid var(--border-color);
   border-radius: 16px;
-  padding: 18px 24px;
+  padding: 14px 20px;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
+  gap: 16px;
   z-index: 50;
   box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4);
   transition: opacity 0.3s ease, transform 0.3s ease;
@@ -415,3 +415,366 @@ body {
   gap: 10px;
   margin-top: 10px;
 }
+
+/* =========================================================
+   1. 大屏端播放控制列 (Screen Playback Bar)
+   ========================================================= */
+.screen-playback-bar {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 36px;
+  padding: 8px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 60;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+  user-select: none;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.screen-playback-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 20px);
+}
+
+.spb-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.spb-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.05);
+}
+
+.spb-btn.active {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+
+.spb-play-main {
+  width: 44px;
+  height: 44px;
+  background: #38bdf8;
+  color: #0b0f19;
+  font-size: 1.15rem;
+  border: none;
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+}
+
+.spb-play-main:hover {
+  background: #7dd3fc;
+  color: #000;
+  transform: scale(1.08);
+}
+
+.spb-time {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: var(--text-sub);
+  min-width: 55px;
+}
+
+.spb-time.spb-current {
+  color: #38bdf8;
+  font-weight: 700;
+  text-align: right;
+}
+
+.spb-scrubber-box {
+  width: 220px;
+  display: flex;
+  align-items: center;
+}
+
+.spb-scrubber {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.spb-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.spb-scrubber::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+}
+
+.spb-speed-group {
+  display: flex;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 16px;
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.spb-chip {
+  background: transparent;
+  border: none;
+  color: var(--text-sub);
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.spb-chip:hover {
+  color: #fff;
+}
+
+.spb-chip.active {
+  background: #38bdf8;
+  color: #0b0f19;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+}
+
+/* =========================================================
+   2. 大屏端繪圖工具列 (Screen Draw Toolbar)
+   ========================================================= */
+.screen-draw-toolbar {
+  position: absolute;
+  top: 72px;
+  left: 24px;
+  z-index: 60;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.screen-draw-toolbar.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-20px);
+}
+
+.draw-tool-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+  border-radius: 12px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.draw-tool-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.08);
+}
+
+.draw-tool-btn.active {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: #38bdf8;
+  color: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
+}
+
+.sdt-divider {
+  width: 24px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 2px 0;
+}
+
+.sdt-colors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sdt-color-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.sdt-color-dot:hover {
+  transform: scale(1.2);
+}
+
+.sdt-color-dot.active {
+  border-color: #ffffff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+  transform: scale(1.15);
+}
+
+.sdt-size-btn {
+  font-size: 0.65rem;
+  font-weight: bold;
+}
+
+/* =========================================================
+   3. 大屏端物理圖表控制面板 (Physics Chart Panel)
+   ========================================================= */
+.physics-chart-panel {
+  position: absolute;
+  bottom: 84px;
+  right: 24px;
+  width: 480px;
+  height: 280px;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6);
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.physics-chart-panel.minimized {
+  height: 44px;
+  width: 320px;
+}
+
+.physics-chart-panel.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(20px);
+}
+
+.chart-header {
+  height: 44px;
+  padding: 0 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  user-select: none;
+}
+
+.chart-tabs {
+  display: flex;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.chart-tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-sub);
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chart-tab-btn:hover {
+  color: #fff;
+}
+
+.chart-tab-btn.active {
+  background: #38bdf8;
+  color: #0b0f19;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
+}
+
+.chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-select-filter {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+  font-size: 0.75rem;
+  padding: 3px 6px;
+  border-radius: 8px;
+  outline: none;
+}
+
+.chart-btn-icon {
+  background: transparent;
+  border: none;
+  color: var(--text-sub);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease;
+}
+
+.chart-btn-icon:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.chart-body {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  height: calc(100% - 44px);
+}
+
+#physicsChartCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
