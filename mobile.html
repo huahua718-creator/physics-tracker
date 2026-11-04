@@ -1,12 +1,22 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-TW" style="background-color: #0f172a;">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Physics Tracker - 手機端控制器</title>
-  <link rel="stylesheet" href="css/mobile.css">
+  <!-- 關鍵防白屏預防樣式 (Critical Inline CSS) -->
+  <style>
+    html, body {
+      background-color: #0f172a !important;
+      color: #f8fafc;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+  <link rel="stylesheet" href="/css/mobile.css">
 </head>
-<body>
+<body style="background-color: #0f172a;">
   <!-- 頂部導航 -->
   <header class="nav-header">
     <div class="nav-title">
@@ -266,10 +276,10 @@
   </main>
 
   <script type="module">
-    import { SyncManager } from "./js/firebase-config.js";
-    import { PhysicsEngine } from "./js/physics-engine.js";
-    import { VideoTracker } from "./js/video-tracker.js";
-    import { AnnotationLayer } from "./js/annotation.js";
+    import { SyncManager } from "/js/firebase-config.js";
+    import { PhysicsEngine } from "/js/physics-engine.js";
+    import { VideoTracker } from "/js/video-tracker.js";
+    import { AnnotationLayer } from "/js/annotation.js";
 
     // 1. 初始化房間配對 PIN
     const urlParams = new URLSearchParams(window.location.search);

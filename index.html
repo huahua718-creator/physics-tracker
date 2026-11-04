@@ -1,14 +1,24 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-TW" style="background-color: #0b0f19;">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Physics Tracker - 大屏接收端</title>
-  <link rel="stylesheet" href="css/screen.css">
+  <!-- 關鍵防白屏預防樣式 (Critical Inline CSS) -->
+  <style>
+    html, body {
+      background-color: #0b0f19 !important;
+      color: #f8fafc;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+  </style>
+  <link rel="stylesheet" href="/css/screen.css">
   <!-- 引入 QR Code 輕量生成庫 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
-<body>
+<body style="background-color: #0b0f19;">
   <!-- 頂部極簡狀態列 -->
   <header class="top-bar">
     <div class="brand-badge">
@@ -237,12 +247,12 @@
   </div>
 
   <script type="module">
-    import { SyncManager } from "./js/firebase-config.js";
-    import { PhysicsEngine } from "./js/physics-engine.js";
-    import { VectorDrawer } from "./js/vector-drawer.js";
-    import { AnnotationLayer } from "./js/annotation.js";
-    import { VideoTracker } from "./js/video-tracker.js";
-    import { PhysicsChart } from "./js/physics-chart.js";
+    import { SyncManager } from "/js/firebase-config.js";
+    import { PhysicsEngine } from "/js/physics-engine.js";
+    import { VectorDrawer } from "/js/vector-drawer.js";
+    import { AnnotationLayer } from "/js/annotation.js";
+    import { VideoTracker } from "/js/video-tracker.js";
+    import { PhysicsChart } from "/js/physics-chart.js";
 
     // 1. 初始化房間 PIN 碼 (取 URL 參數或隨機 6 碼)
     const urlParams = new URLSearchParams(window.location.search);
@@ -254,16 +264,29 @@
     document.getElementById("roomPinText").textContent = screenId;
     document.getElementById("pinDisplayDigits").textContent = screenId;
 
-    // 2. 繪製配對 QR Code
-    const mobileUrl = `${window.location.origin}${window.location.pathname.replace("index.html", "")}mobile.html?room=${screenId}`;
-    new QRCode(document.getElementById("qrcodeBox"), {
-      text: mobileUrl,
-      width: 180,
-      height: 180,
-      colorDark: "#0f172a",
-      colorLight: "#ffffff",
-      correctLevel: QRCode.CorrectLevel.M
-    });
+    // 2. 繪製配對 QR Code (支援 Vercel 與本機絕對根路徑)
+    const mobileUrl = `${window.location.origin}/mobile.html?room=${screenId}`;
+    const qrcodeBox = document.getElementById("qrcodeBox");
+    try {
+      if (typeof QRCode !== "undefined" && qrcodeBox) {
+        qrcodeBox.innerHTML = "";
+        new QRCode(qrcodeBox, {
+          text: mobileUrl,
+          width: 180,
+          height: 180,
+          colorDark: "#0f172a",
+          colorLight: "#ffffff",
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      } else if (qrcodeBox) {
+        qrcodeBox.innerHTML = `<div style="color: #0f172a; font-size: 0.82rem; padding: 18px 10px; font-weight: bold; line-height: 1.4;">📱 手機掃碼/開啟：<br><a href="${mobileUrl}" target="_blank" style="color: #0284c7; word-break: break-all;">${mobileUrl}</a></div>`;
+      }
+    } catch (err) {
+      console.warn("QR Code 初始化未完成:", err);
+      if (qrcodeBox) {
+        qrcodeBox.innerHTML = `<div style="color: #0f172a; font-size: 0.85rem; padding: 20px;">PIN: <b>${screenId}</b></div>`;
+      }
+    }
 
     // 3. 初始化 DOM 元素
     const video = document.getElementById("mainVideo");
