@@ -1,4 +1,4 @@
-// server.js - 零依賴極速本地 HTTP 伺服器 (附區域網路 IP 自動偵測)
+// scripts/local-server.js - 零依賴極速本地 HTTP 伺服器 (附區域網路 IP 自動偵測)
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, '..');
 
 const PORT = process.env.PORT || 3000;
 
@@ -30,7 +31,12 @@ const server = http.createServer((req, res) => {
   let reqPath = decodeURI(req.url.split('?')[0]);
   if (reqPath === '/' || reqPath === '') reqPath = '/index.html';
 
-  const filePath = path.join(__dirname, reqPath);
+  // 支援 cleanUrls (如 /mobile -> /mobile.html)
+  let filePath = path.join(ROOT_DIR, reqPath);
+  if (!path.extname(filePath) && fs.existsSync(filePath + '.html')) {
+    filePath += '.html';
+  }
+
   const ext = path.extname(filePath).toLowerCase();
 
   fs.stat(filePath, (err, stats) => {

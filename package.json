@@ -4,8 +4,8 @@
   "description": "前後端分離、資料驅動的慢動作物理運動影像分析與大屏投影系統",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node scripts/local-server.js",
+    "dev": "node scripts/local-server.js"
   },
   "keywords": [
     "physics",

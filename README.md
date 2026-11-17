@@ -29,7 +29,8 @@
 physics-tracker/
 ├── index.html              # 大屏接收端主頁 (高畫質底圖、HUD、向量殘影、白板)
 ├── mobile.html             # 手機控制器主頁 (影片取色、尺標校準、逐幀解析、播放遙控)
-├── server.js               # 零依賴極速本地 HTTP 伺服器 (自動回報區域網路 IP)
+├── scripts/
+│   └── local-server.js     # 零依賴極速本地 HTTP 伺服器 (自動回報區域網路 IP)
 ├── package.json            # 專案資訊與啟動指令 (npm start)
 ├── css/
 │   ├── screen.css          # 大屏滿版投影與儀表板樣式
@@ -49,9 +50,9 @@ physics-tracker/
 ### 1. 啟動伺服器
 在專案目錄下執行：
 ```bash
-node server.js
-# 或使用 npm
 npm start
+# 或直接執行
+node scripts/local-server.js
 ```
 伺服器啟動後將印出：
 - **大屏接收端**：`http://localhost:3000/index.html`
