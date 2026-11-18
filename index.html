@@ -57,8 +57,8 @@
   <!-- 主視覺舞台 -->
   <main class="stage-container">
     <div class="video-wrapper" id="videoWrapper">
-      <!-- 原生影片播放器 (承載高畫質底圖) -->
-      <video id="mainVideo" playsinline preload="auto"></video>
+      <!-- 原生影片播放器 (承載高畫質底圖，靜音確保遠端遙控自動播放不被瀏覽器阻擋) -->
+      <video id="mainVideo" playsinline muted preload="auto"></video>
       <!-- 向量與殘影繪製疊加層 -->
       <canvas id="vectorCanvas"></canvas>
       <!-- 課堂即時手寫標註白板層 -->
@@ -79,8 +79,14 @@
         </div>
 
         <div class="standby-status">
-          <span class="pulse-dot"></span>
+          <span class="pulse-dot" id="standbyPulseDot"></span>
           <span id="standbyStatusText">等待手機端控制器連線中...</span>
+        </div>
+
+        <div id="screenReceiveProgressBox" style="display: none; width: 100%; max-width: 360px;">
+          <div style="width: 100%; height: 8px; background: rgba(255,255,255,0.12); border-radius: 4px; overflow: hidden;">
+            <div id="screenReceiveProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38bdf8, #10b981); transition: width 0.15s ease;"></div>
+          </div>
         </div>
 
         <div style="display: flex; gap: 10px; margin-top: 8px;">
@@ -315,21 +321,82 @@
     });
 
     let currentTrajectory = [];
+    let hasLoadedVideo = false;
+    let isGeneratingDemo = false;
+    let isReceivingVideo = false;
 
-    // 5. 監聽手機端同步命令
-    syncManager.onStatusChange(async (status) => {
-      console.log("收到狀態同步:", status);
-      if (status.state === "analyzed" || status.state === "playing" || status.videoUrl || status.videoType === "demo") {
+    const connStatusBadge = document.getElementById("connStatusBadge");
+    const standbyStatusText = document.getElementById("standbyStatusText");
+    const standbyPulseDot = document.getElementById("standbyPulseDot");
+    const receiveProgressBox = document.getElementById("screenReceiveProgressBox");
+    const receiveProgressBar = document.getElementById("screenReceiveProgressBar");
+
+    // 5. 監聽手機端連線、影片串流與同步命令
+    syncManager.onConnectionChange((state) => {
+      if (state.p2pConnected) {
+        connStatusBadge.textContent = "(🟢 手機 P2P 已連線)";
+        connStatusBadge.style.color = "#10b981";
+        standbyPulseDot.style.background = "#10b981";
+        if (!hasLoadedVideo && !isReceivingVideo) {
+          standbyStatusText.textContent = "📱 手機已配對連線！請在手機端選擇影片並分析...";
+        }
+      } else if (state.firebaseReady) {
+        connStatusBadge.textContent = "(☁️ Firebase 雲端已連線)";
+        connStatusBadge.style.color = "#38bdf8";
+      } else if (state.p2pStatus === "ready") {
+        connStatusBadge.textContent = "(🟡 P2P 就緒 / 等待手機掃碼)";
+        connStatusBadge.style.color = "#f59e0b";
+      } else {
+        connStatusBadge.textContent = "(本機同步中)";
+        connStatusBadge.style.color = "#94a3b8";
+      }
+    });
+
+    syncManager.onVideoReceive((evt) => {
+      if (evt.state === "start" || evt.state === "progress") {
+        isReceivingVideo = true;
+        receiveProgressBox.style.display = "block";
+        receiveProgressBar.style.width = `${evt.percent}%`;
+        standbyStatusText.textContent = `📥 正在接收手機影片 (${evt.percent}%)...`;
+      } else if (evt.state === "complete") {
+        isReceivingVideo = false;
+        receiveProgressBar.style.width = "100%";
+        setTimeout(() => { receiveProgressBox.style.display = "none"; }, 400);
+
+        console.log(`✅ 已完整接收手機影片 (${evt.name})，準備播放！`);
+        video.src = evt.url;
+        video.load();
+        hasLoadedVideo = true;
         standbyOverlay.classList.add("hidden");
       }
+    });
 
-      if (status.videoType === "demo" && (!video.src || video.src === "" || video.src === window.location.href)) {
-        const blob = await VideoTracker.generateDemoVideo(2.5, 60);
-        video.src = URL.createObjectURL(blob);
-        video.load();
-      } else if (status.videoUrl && video.src !== status.videoUrl) {
+    syncManager.onStatusChange(async (status) => {
+      console.log("收到狀態同步:", status);
+
+      if (status.videoType === "demo" && !hasLoadedVideo && !isGeneratingDemo) {
+        isGeneratingDemo = true;
+        standbyStatusText.textContent = "⏳ 正在同步生成示範影片...";
+        try {
+          const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+          video.src = URL.createObjectURL(blob);
+          video.load();
+          hasLoadedVideo = true;
+          standbyOverlay.classList.add("hidden");
+        } finally {
+          isGeneratingDemo = false;
+        }
+      } else if (status.videoUrl && !status.videoUrl.startsWith("blob:") && video.src !== status.videoUrl) {
         video.src = status.videoUrl;
         video.load();
+        hasLoadedVideo = true;
+        standbyOverlay.classList.add("hidden");
+      } else if (status.videoType === "custom" && !hasLoadedVideo && !isReceivingVideo) {
+        standbyStatusText.textContent = "📱 手機已載入影片，等待分析與影片傳送中...";
+      }
+
+      if (hasLoadedVideo && (status.state === "analyzed" || status.state === "playing")) {
+        standbyOverlay.classList.add("hidden");
       }
 
       if (status.currentTime !== undefined && Math.abs(video.currentTime - status.currentTime) > 0.08) {
@@ -341,7 +408,7 @@
         updateSpeedChips(status.playbackRate);
       }
 
-      if (status.isPlaying !== undefined) {
+      if (status.isPlaying !== undefined && hasLoadedVideo) {
         if (status.isPlaying && video.paused) {
           video.play().catch(e => console.warn("自動播放限制:", e));
         } else if (!status.isPlaying && !video.paused) {
@@ -363,11 +430,20 @@
       console.log(`收到軌跡物理數據，共 ${trajectory.length} 影格點`);
       currentTrajectory = trajectory;
       physicsChart.setData(trajectory, video.duration);
-      standbyOverlay.classList.add("hidden");
+
+      if (hasLoadedVideo) {
+        standbyOverlay.classList.add("hidden");
+      } else if (!isReceivingVideo) {
+        standbyStatusText.textContent = `📊 已收到 ${trajectory.length} 點物理數據，等待影片傳輸就緒...`;
+      }
     });
 
     syncManager.onDrawEvent((drawEvent) => {
       annotationLayer.receiveDrawEvent(drawEvent);
+    });
+
+    window.addEventListener("beforeunload", () => {
+      syncManager.destroy();
     });
 
     // 6. 核心渲染循環 (Render Loop)
@@ -625,6 +701,7 @@
         const url = URL.createObjectURL(blob);
         video.src = url;
         video.load();
+        hasLoadedVideo = true;
         await new Promise(r => {
           if (video.readyState >= 2) return r();
           video.onloadeddata = r;

@@ -136,8 +136,17 @@
           <div style="font-size: 0.8rem; color: #cbd5e1; margin-top: 4px;" id="resultSummaryText">
             已平滑提取 150 點，速度與加速度向量已就緒。
           </div>
+          <div id="syncTransferBox" style="display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.12);">
+            <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: #38bdf8;">
+              <span id="syncTransferText">📤 正在傳送影片至大屏...</span>
+              <span id="syncTransferPercent">0%</span>
+            </div>
+            <div class="progress-container" style="margin-top: 4px;">
+              <div class="progress-bar" id="syncTransferBar" style="background: #38bdf8; width: 0%;"></div>
+            </div>
+          </div>
           <button class="btn btn-success" id="btnPushToScreen" style="margin-top: 10px; width: 100%;">
-            📡 同步物理數據至大屏
+            📡 同步並前往播放遙控
           </button>
         </div>
       </div>
@@ -284,7 +293,10 @@
     // 1. 初始化房間配對 PIN
     const urlParams = new URLSearchParams(window.location.search);
     let screenId = urlParams.get("room") || localStorage.getItem("last_room_pin") || "839201";
-    document.getElementById("connRoomText").textContent = `PIN: ${screenId}`;
+    const connPill = document.getElementById("connPill");
+    const connDot = connPill.querySelector(".conn-dot");
+    const connRoomText = document.getElementById("connRoomText");
+    connRoomText.textContent = `連線中 | PIN: ${screenId}`;
     document.getElementById("inputRoomPin").value = screenId;
 
     let syncManager = new SyncManager(screenId, "mobile");
@@ -301,6 +313,103 @@
     let scalePoints = [];
     let isPlaying = false;
     let currentSpeed = 0.25;
+
+    // 影片傳輸狀態追蹤
+    let currentVideoFile = null;
+    let currentVideoType = "custom"; // "custom" | "demo"
+    let videoTransferDone = false;
+    let activeVideoTransferPromise = null;
+    let wasP2PConnected = false;
+
+    const syncTransferBox = document.getElementById("syncTransferBox");
+    const syncTransferText = document.getElementById("syncTransferText");
+    const syncTransferPercent = document.getElementById("syncTransferPercent");
+    const syncTransferBar = document.getElementById("syncTransferBar");
+
+    function updateTransferUI(text, percent, color = "#38bdf8") {
+      syncTransferBox.style.display = "block";
+      syncTransferText.textContent = text;
+      syncTransferText.style.color = color;
+      syncTransferPercent.textContent = `${percent}%`;
+      syncTransferPercent.style.color = color;
+      syncTransferBar.style.width = `${percent}%`;
+      syncTransferBar.style.background = color;
+    }
+
+    function startVideoTransfer() {
+      if (currentVideoType !== "custom" || !currentVideoFile) {
+        videoTransferDone = true;
+        return Promise.resolve({ sentViaP2P: true, sentViaLocal: true });
+      }
+      if (activeVideoTransferPromise) return activeVideoTransferPromise;
+
+      const fileToSend = currentVideoFile;
+      updateTransferUI("📤 正在傳送影片至大屏...", 0);
+
+      activeVideoTransferPromise = syncManager.sendVideoFile(fileToSend, ({ percent }) => {
+        if (currentVideoFile === fileToSend) {
+          updateTransferUI(`📤 正在傳送影片至大屏...`, percent);
+        }
+      }).then((res) => {
+        activeVideoTransferPromise = null;
+        if (res.aborted) return res;
+        if (res.sentViaP2P) {
+          videoTransferDone = true;
+          updateTransferUI("✅ 影片與物理數據已送達大屏！", 100, "#10b981");
+        } else if (res.sentViaLocal) {
+          updateTransferUI("ℹ️ 已透過本機通道送出 (若大屏在另一裝置，請確認 P2P 已連線)", 100, "#f59e0b");
+        } else {
+          updateTransferUI("⚠️ 尚未連線至大屏，請確認大屏已開啟且 PIN 相符", 0, "#ef4444");
+        }
+        return res;
+      }).catch((err) => {
+        activeVideoTransferPromise = null;
+        console.error("影片傳送失敗:", err);
+        updateTransferUI("❌ 影片傳送失敗，請點擊下方按鈕重試", 0, "#ef4444");
+        return { sentViaP2P: false, sentViaLocal: false };
+      });
+
+      return activeVideoTransferPromise;
+    }
+
+    syncManager.onConnectionChange((state) => {
+      if (state.p2pConnected) {
+        connDot.style.background = "#10b981";
+        connPill.style.borderColor = "rgba(16, 185, 129, 0.4)";
+        connPill.style.color = "#10b981";
+        connRoomText.textContent = `🟢 P2P已連線 | ${screenId}`;
+
+        // 若手機端先前已載入影片或完成分析，連上 P2P 後自動補傳
+        if (!wasP2PConnected) {
+          if (currentVideoType === "custom" && currentVideoFile && !videoTransferDone) {
+            startVideoTransfer();
+          }
+          if (processedTrajectory && processedTrajectory.length > 0) {
+            syncManager.sendPhysicsData(processedTrajectory);
+            syncManager.updateStatus({
+              state: "analyzed",
+              videoType: currentVideoType,
+              currentTime: mobileVideo.currentTime || 0,
+              playbackRate: currentSpeed,
+              isPlaying: isPlaying
+            });
+          }
+        }
+        wasP2PConnected = true;
+      } else if (state.firebaseReady) {
+        wasP2PConnected = false;
+        connDot.style.background = "#38bdf8";
+        connPill.style.borderColor = "rgba(56, 189, 248, 0.4)";
+        connPill.style.color = "#38bdf8";
+        connRoomText.textContent = `☁️ 雲端連線 | ${screenId}`;
+      } else {
+        wasP2PConnected = false;
+        connDot.style.background = "#f59e0b";
+        connPill.style.borderColor = "rgba(245, 158, 11, 0.4)";
+        connPill.style.color = "#f59e0b";
+        connRoomText.textContent = `🟡 等待配對 | ${screenId}`;
+      }
+    });
 
     // 初始化手機手寫板
     const mobileAnnotation = new AnnotationLayer(mobileDrawCanvas, {
@@ -331,8 +440,12 @@
     document.getElementById("videoFileInput").onchange = (e) => {
       const file = e.target.files[0];
       if (file) {
+        currentVideoFile = file;
+        currentVideoType = "custom";
+        videoTransferDone = false;
+        activeVideoTransferPromise = null;
         const url = URL.createObjectURL(file);
-        loadVideoUrl(url);
+        loadVideoUrl(url, "custom");
       }
     };
 
@@ -343,6 +456,10 @@
 
       try {
         const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+        currentVideoFile = null;
+        currentVideoType = "demo";
+        videoTransferDone = true;
+        activeVideoTransferPromise = null;
         const url = URL.createObjectURL(blob);
         loadVideoUrl(url, "demo");
       } catch (err) {
@@ -358,7 +475,11 @@
       mobileVideo.src = url;
       mobileVideo.load();
 
+      let readyNotified = false;
       const onVideoReady = () => {
+        if (readyNotified) return;
+        readyNotified = true;
+
         previewCanvas.width = mobileVideo.videoWidth || 640;
         previewCanvas.height = mobileVideo.videoHeight || 360;
         drawPreviewFrame();
@@ -366,15 +487,19 @@
         document.getElementById("remoteTotalDuration").textContent = `${dur.toFixed(2)} s`;
         document.getElementById("remoteScrubber").max = dur;
 
-        // 同步通知大屏
+        // 同步通知大屏 (自選影片透過 sendVideoFile 傳送實體檔案，不傳無效 blob URL)
         syncManager.updateStatus({
           state: "ready",
           videoType: videoType,
-          videoUrl: url,
           currentTime: 0,
           playbackRate: currentSpeed,
           isPlaying: false
         });
+
+        // 若為自選影片，立即開始於背景預傳送給大屏
+        if (videoType === "custom" && currentVideoFile) {
+          startVideoTransfer();
+        }
       };
 
       mobileVideo.onloadeddata = onVideoReady;
@@ -557,6 +682,9 @@
 
         document.getElementById("resultSummaryText").textContent =
           `共解析 ${processedTrajectory.length} 影格點，最大速度 ${maxV} m/s。已由 Savitzky-Golay 濾波完成微積分平滑！`;
+
+        // 分析完成後自動啟動同步至大屏 (包含物理數據與影片檔)
+        await pushAllToScreen({ autoSwitchTab: false });
       } catch (err) {
         console.error("逐幀分析出錯:", err);
         alert("逐幀分析失敗: " + (err.message || err));
@@ -566,21 +694,41 @@
       }
     };
 
-    // 6. 同步物理數據至大屏
-    document.getElementById("btnPushToScreen").onclick = () => {
+    // 6. 同步物理數據與影片至大屏
+    async function pushAllToScreen({ autoSwitchTab = false } = {}) {
       if (!processedTrajectory || processedTrajectory.length === 0) return;
 
-      syncManager.sendPhysicsData(processedTrajectory);
-      syncManager.updateStatus({
-        state: "analyzed",
-        currentTime: 0,
-        playbackRate: currentSpeed,
-        isPlaying: false
-      });
+      const pushBtn = document.getElementById("btnPushToScreen");
+      pushBtn.disabled = true;
 
-      alert("🎉 物理數據已成功同步至大屏！請切換至「播放遙控」頁籤進行課堂操作。");
-      // 自動切換至遙控頁
-      document.querySelector('[data-tab="tab-remote"]').click();
+      try {
+        await syncManager.sendPhysicsData(processedTrajectory);
+        await syncManager.updateStatus({
+          state: "analyzed",
+          videoType: currentVideoType,
+          currentTime: 0,
+          playbackRate: currentSpeed,
+          isPlaying: false
+        });
+
+        if (currentVideoType === "custom" && currentVideoFile && !videoTransferDone) {
+          pushBtn.textContent = "⏳ 正在傳送影片至大屏...";
+          await startVideoTransfer();
+        } else if (currentVideoType === "demo") {
+          updateTransferUI("✅ 示範影片與物理數據已同步至大屏！", 100, "#10b981");
+        }
+
+        if (autoSwitchTab) {
+          document.querySelector('[data-tab="tab-remote"]').click();
+        }
+      } finally {
+        pushBtn.disabled = false;
+        pushBtn.textContent = "📡 同步並前往播放遙控";
+      }
+    }
+
+    document.getElementById("btnPushToScreen").onclick = () => {
+      pushAllToScreen({ autoSwitchTab: true });
     };
 
     // 7. 播放遙控功能
@@ -621,7 +769,8 @@
 
     document.getElementById("btnStepForward").onclick = () => {
       const dt = 1 / Number(document.getElementById("selectFps").value);
-      mobileVideo.currentTime = Math.min(mobileVideo.duration, mobileVideo.currentTime + dt);
+      const dur = (mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 999;
+      mobileVideo.currentTime = Math.min(dur, mobileVideo.currentTime + dt);
       syncManager.updateStatus({ currentTime: mobileVideo.currentTime, isPlaying: false });
     };
 
@@ -688,12 +837,18 @@
       if (newPin) {
         screenId = newPin;
         localStorage.setItem("last_room_pin", screenId);
-        document.getElementById("connRoomText").textContent = `PIN: ${screenId}`;
-        syncManager.destroy();
-        syncManager = new SyncManager(screenId, "mobile");
-        alert(`已成功切換至房間 PIN: ${screenId}`);
+        videoTransferDone = false;
+        wasP2PConnected = false;
+        activeVideoTransferPromise = null;
+        connRoomText.textContent = `連線中 | ${screenId}`;
+        syncManager.setScreenId(screenId);
+        alert(`已切換至房間 PIN: ${screenId}，正在建立 P2P 連線...`);
       }
     };
+
+    window.addEventListener("beforeunload", () => {
+      syncManager.destroy();
+    });
 
     document.getElementById("btnSaveMobileConfig").onclick = () => {
       const cfg = {
