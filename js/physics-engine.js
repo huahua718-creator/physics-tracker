@@ -8,8 +8,9 @@ export class PhysicsEngine {
   constructor(options = {}) {
     // 預設比例尺: 1 像素 = 0.0025 公尺 (可透過校準更新)
     this.pixelToMeter = options.pixelToMeter || 0.0025;
-    this.origin = options.origin || { x: 0, y: 0 }; // 物理原點 (像素座標)
+    this.origin = options.origin || null; // 物理原點 (未指定時自動以軌跡首點為原點)
     this.yAxisUp = options.yAxisUp !== undefined ? options.yAxisUp : true; // 預設向上為正 (符合高中物理習慣)
+    this.horizonAngle = options.horizonAngle || 0; // 水平基準傾角 (rad)
   }
 
   /**
@@ -23,6 +24,34 @@ export class PhysicsEngine {
     }
     this.pixelToMeter = realDistanceMeters / pixelDistance;
     return this.pixelToMeter;
+  }
+
+  /**
+   * 設定水平基準方向傾角 (弧度)
+   * @param {number} angleRad 兩點連線相對於水平向右的角度
+   */
+  setHorizonAngle(angleRad) {
+    this.horizonAngle = Number.isFinite(angleRad) ? angleRad : 0;
+  }
+
+  /**
+   * 像素座標轉換為物理公尺座標 (支援水平傾角旋轉校正)
+   */
+  toMeterCoords(px, py, origin) {
+    const dx = px - origin.x;
+    const dy = py - origin.y;
+    const cosA = Math.cos(this.horizonAngle);
+    const sinA = Math.sin(this.horizonAngle);
+
+    const localX = dx * cosA + dy * sinA;
+    const localY = this.yAxisUp
+      ? (dx * sinA - dy * cosA)
+      : (-dx * sinA + dy * cosA);
+
+    return {
+      meterX: localX * this.pixelToMeter,
+      meterY: localY * this.pixelToMeter
+    };
   }
 
   /**
@@ -64,20 +93,26 @@ export class PhysicsEngine {
    * @returns {Array<TrajectoryPoint>} 包含物理向量的軌跡資料
    */
   processTrajectory(rawPoints) {
-    if (!rawPoints || rawPoints.length < 3) {
-      return rawPoints.map(p => ({
-        t: p.t,
-        x: p.x,
-        y: p.y,
-        meterX: (p.x - this.origin.x) * this.pixelToMeter,
-        meterY: (this.yAxisUp ? (this.origin.y - p.y) : (p.y - this.origin.y)) * this.pixelToMeter,
-        vx: 0,
-        vy: 0,
-        v: 0,
-        ax: 0,
-        ay: 0,
-        a: 0
-      }));
+    if (!rawPoints || rawPoints.length === 0) return [];
+    const activeOrigin = this.origin || { x: rawPoints[0].x, y: rawPoints[0].y };
+
+    if (rawPoints.length < 3) {
+      return rawPoints.map(p => {
+        const m = this.toMeterCoords(p.x, p.y, activeOrigin);
+        return {
+          t: p.t,
+          x: p.x,
+          y: p.y,
+          meterX: Number(m.meterX.toFixed(3)),
+          meterY: Number(m.meterY.toFixed(3)),
+          vx: 0,
+          vy: 0,
+          v: 0,
+          ax: 0,
+          ay: 0,
+          a: 0
+        };
+      });
     }
 
     const n = rawPoints.length;
@@ -89,9 +124,14 @@ export class PhysicsEngine {
     const smoothX = this.savitzkyGolaySmooth(rawX);
     const smoothY = this.savitzkyGolaySmooth(rawY);
 
-    // 2. 轉為物理世界公尺座標 (支援笛卡兒坐標向上為正)
-    const meterX = smoothX.map(x => (x - this.origin.x) * this.pixelToMeter);
-    const meterY = smoothY.map(y => (this.yAxisUp ? (this.origin.y - y) : (y - this.origin.y)) * this.pixelToMeter);
+    // 2. 轉為物理世界公尺座標 (套用尺標比例與水平傾角校正)
+    const meterX = new Array(n);
+    const meterY = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const m = this.toMeterCoords(smoothX[i], smoothY[i], activeOrigin);
+      meterX[i] = m.meterX;
+      meterY[i] = m.meterY;
+    }
 
     // 3. 中心差分法計算速度向量 (Central Difference)
     // vx[i] = (meterX[i+1] - meterX[i-1]) / (times[i+1] - times[i-1])

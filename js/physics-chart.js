@@ -2,7 +2,7 @@
  * physics-chart.js
  * 大屏端即時物理圖表引擎
  * 支援：x-t, y-t (位移), v-t (速度), a-t (加速度) 圖表
- * 具備 X 軸、Y 軸分量切換與隨影片播放動態同步繪製功能
+ * 具備 X/Y 分量切換、動態同步繪製、Y/X 軸縮放平移與數據起伏自動聚焦功能
  */
 
 export class PhysicsChart {
@@ -14,6 +14,15 @@ export class PhysicsChart {
     this.drawMode = options.drawMode || "dynamic"; // "dynamic" (隨播放繪製) | "full" (全曲線+掃描光點)
     this.trajectory = [];
     this.duration = 2.5;
+
+    // 縮放與聚焦控制
+    this.yZoom = 1.0;
+    this.xZoom = 1.0;
+    this.xPan = 0.0; // 0.0 ~ 1.0
+    this.yPan = 0.0; // 物理數值位移
+    this.focusDataRange = true; // 預設聚焦數據起伏區間 (避免 0 點或碰撞尖峰壓扁曲線)
+    this.onZoomChange = options.onZoomChange || null;
+    this.lastCurrentTime = 0;
 
     // 配色定義 (與大屏 HUD 與向量箭頭一致)
     this.colors = {
@@ -29,33 +38,138 @@ export class PhysicsChart {
       textHighlight: "#f8fafc"
     };
 
-    this.padding = { left: 55, right: 25, top: 32, bottom: 32 };
+    this.padding = { left: 60, right: 20, top: 34, bottom: 30 };
+    this.initInteractions();
+  }
+
+  initInteractions() {
+    let isDragging = false;
+    let lastClientX = 0;
+    let lastClientY = 0;
+
+    this.canvas.style.cursor = "grab";
+
+    // 滑鼠滾輪縮放 (預設縮放 Y 軸放大起伏，按住 Shift 縮放 X 軸時間)
+    this.canvas.addEventListener("wheel", (e) => {
+      if (!this.trajectory || this.trajectory.length < 2) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
+      if (e.shiftKey) {
+        this.zoomX(factor);
+      } else {
+        this.zoomY(factor);
+      }
+      this.render(this.lastCurrentTime);
+    }, { passive: false });
+
+    this.canvas.addEventListener("mousedown", (e) => {
+      if (!this.trajectory || this.trajectory.length < 2) return;
+      isDragging = true;
+      lastClientX = e.clientX;
+      lastClientY = e.clientY;
+      this.canvas.style.cursor = "grabbing";
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - lastClientX;
+      const dy = e.clientY - lastClientY;
+      lastClientX = e.clientX;
+      lastClientY = e.clientY;
+
+      const rect = this.canvas.getBoundingClientRect();
+      const plotW = Math.max(1, rect.width - this.padding.left - this.padding.right);
+      const plotH = Math.max(1, rect.height - this.padding.top - this.padding.bottom);
+
+      // 水平平移時間窗
+      if (this.xZoom > 1.0) {
+        const visibleRatio = 1 / this.xZoom;
+        const maxPan = Math.max(0, 1 - visibleRatio);
+        this.xPan = Math.min(maxPan, Math.max(0, this.xPan - (dx / plotW) * visibleRatio));
+      }
+
+      // 垂直平移 Y 數值窗
+      const seriesConfig = this.getSeriesConfig();
+      const { minY, maxY } = this.calculateYRange(seriesConfig);
+      const spanY = maxY - minY;
+      this.yPan += (dy / plotH) * spanY;
+
+      this.render(this.lastCurrentTime);
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (isDragging) {
+        isDragging = false;
+        this.canvas.style.cursor = "grab";
+      }
+    });
   }
 
   setData(trajectory, duration = null) {
     this.trajectory = trajectory || [];
-    if (duration) {
+    if (duration && isFinite(duration)) {
       this.duration = duration;
     } else if (this.trajectory.length > 0) {
       this.duration = this.trajectory[this.trajectory.length - 1].t;
     }
+    this.resetZoom();
   }
 
   setType(type) {
     if (["xt", "vt", "at"].includes(type)) {
       this.type = type;
+      this.yPan = 0;
     }
   }
 
   setAxisFilter(filter) {
     if (["all", "x", "y"].includes(filter)) {
       this.axisFilter = filter;
+      this.yPan = 0;
     }
   }
 
   setDrawMode(mode) {
     if (["dynamic", "full"].includes(mode)) {
       this.drawMode = mode;
+    }
+  }
+
+  zoomY(factor) {
+    this.yZoom = Math.min(50, Math.max(0.2, this.yZoom * factor));
+    this.notifyZoom();
+  }
+
+  zoomX(factor) {
+    const prevVisible = 1 / this.xZoom;
+    this.xZoom = Math.min(20, Math.max(1.0, this.xZoom * factor));
+    const newVisible = 1 / this.xZoom;
+    this.xPan = Math.min(Math.max(0, 1 - newVisible), Math.max(0, this.xPan + (prevVisible - newVisible) / 2));
+    this.notifyZoom();
+  }
+
+  toggleFocusMode() {
+    this.focusDataRange = !this.focusDataRange;
+    this.yPan = 0;
+    this.notifyZoom();
+    return this.focusDataRange;
+  }
+
+  resetZoom() {
+    this.yZoom = 1.0;
+    this.xZoom = 1.0;
+    this.xPan = 0.0;
+    this.yPan = 0.0;
+    this.notifyZoom();
+  }
+
+  notifyZoom() {
+    if (this.onZoomChange) {
+      this.onZoomChange({
+        yZoom: this.yZoom,
+        xZoom: this.xZoom,
+        focusDataRange: this.focusDataRange
+      });
     }
   }
 
@@ -81,7 +195,6 @@ export class PhysicsChart {
       return this.trajectory[this.trajectory.length - 1];
     }
 
-    // 二分搜尋
     let low = 0;
     let high = this.trajectory.length - 1;
     while (low <= high) {
@@ -99,7 +212,8 @@ export class PhysicsChart {
 
     const p0 = this.trajectory[i0];
     const p1 = this.trajectory[i1];
-    const ratio = (t - p0.t) / (p1.t - p0.t);
+    const dt = p1.t - p0.t;
+    const ratio = dt > 0 ? (t - p0.t) / dt : 0;
 
     const lerp = (a, b) => a + (b - a) * ratio;
 
@@ -121,6 +235,7 @@ export class PhysicsChart {
    * @param {number} currentTime 當前影片播放時間 (秒)
    */
   render(currentTime = 0) {
+    this.lastCurrentTime = currentTime;
     this.syncSize();
     const ctx = this.ctx;
     const w = this.canvas.width;
@@ -145,27 +260,37 @@ export class PhysicsChart {
     const plotH = h - pad.top - pad.bottom;
     if (plotW <= 0 || plotH <= 0) return;
 
-    // 1. 決定資料序列與 Y 軸範圍
+    // 1. 決定資料序列、Y 軸與時間範圍 (支援縮放與平移)
     const seriesConfig = this.getSeriesConfig();
     const { minY, maxY } = this.calculateYRange(seriesConfig);
 
-    // 座標映射函數
-    const tMax = Math.max(this.duration, this.trajectory[this.trajectory.length - 1].t, 0.1);
-    const mapX = (t) => pad.left + (t / tMax) * plotW;
+    const tStartAll = this.trajectory[0].t;
+    const tEndAll = Math.max(this.trajectory[this.trajectory.length - 1].t, tStartAll + 0.1);
+    const totalSpanT = tEndAll - tStartAll;
+    const viewSpanT = totalSpanT / this.xZoom;
+    const viewTMin = tStartAll + this.xPan * totalSpanT;
+    const viewTMax = viewTMin + viewSpanT;
+
+    const mapX = (t) => pad.left + ((t - viewTMin) / viewSpanT) * plotW;
     const mapY = (val) => pad.top + plotH - ((val - minY) / (maxY - minY)) * plotH;
 
     // 2. 繪製背景網格與座標刻度
-    this.drawGridAndAxes(ctx, pad, plotW, plotH, tMax, minY, maxY, mapX, mapY, seriesConfig.unit, dpr);
+    this.drawGridAndAxes(ctx, pad, plotW, plotH, viewTMin, viewTMax, minY, maxY, mapX, mapY, seriesConfig.unit, dpr);
 
-    // 3. 繪製物理曲線
+    // 3. 裁切繪圖區域內繪製曲線與掃描游標
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(pad.left, pad.top, plotW, plotH);
+    ctx.clip();
+
     seriesConfig.lines.forEach(line => {
       this.drawSeriesLine(ctx, line, mapX, mapY, currentTime, dpr);
     });
 
-    // 4. 繪製當前時間指示線 (Scanning Cursor) 與指示光點
-    this.drawCurrentTimeCursor(ctx, pad, plotH, currentTime, tMax, mapX, mapY, seriesConfig, dpr);
+    this.drawCurrentTimeCursor(ctx, pad, plotH, currentTime, viewTMin, viewTMax, mapX, mapY, seriesConfig, dpr);
+    ctx.restore();
 
-    // 5. 繪製圖例 (Legend) 與即時數據看板
+    // 4. 繪製圖例 (Legend) 與即時數據看板
     this.drawLegendAndHud(ctx, pad, seriesConfig, currentTime, dpr);
   }
 
@@ -173,69 +298,84 @@ export class PhysicsChart {
     if (this.type === "xt") {
       const lines = [];
       if (this.axisFilter === "all" || this.axisFilter === "x") {
-        lines.push({ key: "meterX", name: "X軸位移 (x)", color: this.colors.x });
+        lines.push({ key: "meterX", name: "X位移 (x)", color: this.colors.x });
       }
       if (this.axisFilter === "all" || this.axisFilter === "y") {
-        lines.push({ key: "meterY", name: "Y軸位移 (y)", color: this.colors.y });
+        lines.push({ key: "meterY", name: "Y位移 (y)", color: this.colors.y });
       }
-      return { title: "位移 - 時間圖 (x-t / y-t)", unit: "m", lines };
+      return { title: "位移 x-t / y-t", unit: "m", lines };
     } else if (this.type === "vt") {
       const lines = [];
       if (this.axisFilter === "all" || this.axisFilter === "x") {
-        lines.push({ key: "vx", name: "X速度 (vx)", color: this.colors.x });
+        lines.push({ key: "vx", name: "vx", color: this.colors.x });
       }
       if (this.axisFilter === "all" || this.axisFilter === "y") {
-        lines.push({ key: "vy", name: "Y速度 (vy)", color: this.colors.y });
+        lines.push({ key: "vy", name: "vy", color: this.colors.y });
       }
       if (this.axisFilter === "all") {
-        lines.push({ key: "v", name: "合速度 (|v|)", color: this.colors.mag, dash: [4, 4] });
+        lines.push({ key: "v", name: "|v|", color: this.colors.mag, dash: [4, 4] });
       }
-      return { title: "速度 - 時間圖 (v-t)", unit: "m/s", lines };
+      return { title: "速度 v-t", unit: "m/s", lines };
     } else {
-      // at
       const lines = [];
       if (this.axisFilter === "all" || this.axisFilter === "x") {
-        lines.push({ key: "ax", name: "X加速度 (ax)", color: this.colors.x });
+        lines.push({ key: "ax", name: "ax", color: this.colors.x });
       }
       if (this.axisFilter === "all" || this.axisFilter === "y") {
-        lines.push({ key: "ay", name: "Y加速度 (ay)", color: this.colors.accY });
+        lines.push({ key: "ay", name: "ay", color: this.colors.accY });
       }
-      return { title: "加速度 - 時間圖 (a-t)", unit: "m/s²", lines };
+      return { title: "加速度 a-t", unit: "m/s²", lines };
     }
   }
 
   calculateYRange(config) {
-    let minY = Infinity;
-    let maxY = -Infinity;
-
+    const allVals = [];
     for (const pt of this.trajectory) {
       for (const line of config.lines) {
         const val = pt[line.key];
-        if (val !== undefined && !isNaN(val)) {
-          if (val < minY) minY = val;
-          if (val > maxY) maxY = val;
+        if (val !== undefined && !isNaN(val) && isFinite(val)) {
+          allVals.push(val);
         }
       }
     }
 
-    if (minY === Infinity || maxY === -Infinity) {
-      minY = -1;
-      maxY = 1;
+    if (allVals.length === 0) {
+      return { minY: -1, maxY: 1 };
     }
 
-    // 包含 0 刻度以利物理觀察
-    if (minY > 0) minY = 0;
-    if (maxY < 0) maxY = 0;
+    allVals.sort((a, b) => a - b);
 
-    const span = Math.max(maxY - minY, 0.5);
-    const margin = span * 0.15; // 15% 上下留白
+    let minY = allVals[0];
+    let maxY = allVals[allVals.length - 1];
+
+    if (this.focusDataRange) {
+      // 聚焦核心區間：在 v-t / a-t 時排除極端 2% 單幀碰撞尖峰，讓物理變化起伏佔滿視窗
+      if (allVals.length >= 25 && (this.type === "at" || this.type === "vt")) {
+        const pLow = allVals[Math.floor(allVals.length * 0.02)];
+        const pHigh = allVals[Math.ceil(allVals.length * 0.98) - 1];
+        if (pHigh - pLow > 0.05) {
+          minY = pLow;
+          maxY = pHigh;
+        }
+      }
+    } else {
+      // 完整模式：強制包含 0 基準線
+      if (minY > 0) minY = 0;
+      if (maxY < 0) maxY = 0;
+    }
+
+    const rawSpan = Math.max(maxY - minY, 0.1);
+    const paddedSpan = rawSpan * 1.25;
+    const center = (minY + maxY) / 2 + this.yPan;
+    const zoomedHalfSpan = (paddedSpan / 2) / this.yZoom;
+
     return {
-      minY: minY - margin,
-      maxY: maxY + margin
+      minY: center - zoomedHalfSpan,
+      maxY: center + zoomedHalfSpan
     };
   }
 
-  drawGridAndAxes(ctx, pad, plotW, plotH, tMax, minY, maxY, mapX, mapY, unit, dpr) {
+  drawGridAndAxes(ctx, pad, plotW, plotH, tMin, tMax, minY, maxY, mapX, mapY, unit, dpr) {
     ctx.save();
     ctx.lineWidth = 1 * dpr;
     ctx.strokeStyle = this.colors.grid;
@@ -244,10 +384,13 @@ export class PhysicsChart {
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
 
+    const ySpan = maxY - minY;
+    const decimals = ySpan < 0.4 ? 3 : (ySpan < 4 ? 2 : 1);
+
     // 水平網格與 Y 刻度 (5 條)
     const ySteps = 4;
     for (let i = 0; i <= ySteps; i++) {
-      const val = minY + (i / ySteps) * (maxY - minY);
+      const val = minY + (i / ySteps) * ySpan;
       const y = mapY(val);
 
       ctx.beginPath();
@@ -255,10 +398,10 @@ export class PhysicsChart {
       ctx.lineTo(pad.left + plotW, y);
       ctx.stroke();
 
-      ctx.fillText(`${val.toFixed(1)} ${unit}`, pad.left - 6 * dpr, y);
+      ctx.fillText(`${val.toFixed(decimals)} ${unit}`, pad.left - 6 * dpr, y);
     }
 
-    // 0 基準水平線強調
+    // 0 基準水平線強調 (若 0 在視野內)
     if (minY <= 0 && maxY >= 0) {
       const zeroY = mapY(0);
       ctx.beginPath();
@@ -277,9 +420,11 @@ export class PhysicsChart {
     ctx.strokeStyle = this.colors.grid;
     ctx.lineWidth = 1 * dpr;
 
+    const tSpan = tMax - tMin;
+    const tDecimals = tSpan < 1 ? 2 : 1;
     const tSteps = 5;
     for (let i = 0; i <= tSteps; i++) {
-      const t = (i / tSteps) * tMax;
+      const t = tMin + (i / tSteps) * tSpan;
       const x = mapX(t);
 
       ctx.beginPath();
@@ -287,7 +432,7 @@ export class PhysicsChart {
       ctx.lineTo(x, pad.top + plotH);
       ctx.stroke();
 
-      ctx.fillText(`${t.toFixed(1)}s`, x, pad.top + plotH + 8 * dpr);
+      ctx.fillText(`${t.toFixed(tDecimals)}s`, x, pad.top + plotH + 8 * dpr);
     }
 
     // 主座標軸外框
@@ -306,7 +451,6 @@ export class PhysicsChart {
     ctx.lineJoin = "round";
 
     if (this.drawMode === "full") {
-      // 繪製完整實線
       ctx.strokeStyle = line.color;
       if (line.dash) ctx.setLineDash(line.dash.map(v => v * dpr));
       ctx.beginPath();
@@ -318,7 +462,6 @@ export class PhysicsChart {
       });
       ctx.stroke();
     } else {
-      // dynamic 模式：淡色虛線繪製未來路徑，飽和實線繪製目前已播放路徑
       ctx.strokeStyle = line.color;
       ctx.globalAlpha = 0.25;
       ctx.beginPath();
@@ -330,8 +473,8 @@ export class PhysicsChart {
       });
       ctx.stroke();
 
-      // 已播放實線
       ctx.globalAlpha = 1.0;
+      if (line.dash) ctx.setLineDash(line.dash.map(v => v * dpr));
       ctx.beginPath();
       let started = false;
       for (let i = 0; i < pts.length; i++) {
@@ -346,7 +489,6 @@ export class PhysicsChart {
             ctx.lineTo(x, y);
           }
         } else {
-          // 插值到精確 currentTime
           const interp = this.interpolate(currentTime);
           if (interp && interp[line.key] !== undefined) {
             ctx.lineTo(mapX(currentTime), mapY(interp[line.key]));
@@ -360,12 +502,11 @@ export class PhysicsChart {
     ctx.restore();
   }
 
-  drawCurrentTimeCursor(ctx, pad, plotH, currentTime, tMax, mapX, mapY, seriesConfig, dpr) {
+  drawCurrentTimeCursor(ctx, pad, plotH, currentTime, tMin, tMax, mapX, mapY, seriesConfig, dpr) {
+    if (currentTime < tMin || currentTime > tMax) return;
     const curX = mapX(currentTime);
-    if (curX < pad.left || curX > pad.left + (mapX(tMax) - pad.left)) return;
 
     ctx.save();
-    // 垂直掃描指示線
     ctx.strokeStyle = this.colors.cursor;
     ctx.lineWidth = 1.5 * dpr;
     ctx.setLineDash([3 * dpr, 3 * dpr]);
@@ -375,7 +516,6 @@ export class PhysicsChart {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // 當前時間各曲線高亮指示光點
     const interp = this.interpolate(currentTime);
     if (interp) {
       seriesConfig.lines.forEach(line => {
@@ -383,14 +523,12 @@ export class PhysicsChart {
         if (val !== undefined) {
           const curY = mapY(val);
 
-          // 光暈外圈
           ctx.beginPath();
           ctx.fillStyle = line.color;
           ctx.globalAlpha = 0.35;
           ctx.arc(curX, curY, 8 * dpr, 0, Math.PI * 2);
           ctx.fill();
 
-          // 核心白點
           ctx.globalAlpha = 1.0;
           ctx.fillStyle = "#ffffff";
           ctx.beginPath();
@@ -409,31 +547,26 @@ export class PhysicsChart {
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
 
-    // 標題
     ctx.fillStyle = this.colors.textHighlight;
     ctx.fillText(config.title, pad.left, pad.top - 16 * dpr);
 
-    // 插值即時數據
     const interp = this.interpolate(currentTime);
 
-    // 圖例項目與即時讀數
-    let offsetX = pad.left + 160 * dpr;
+    let offsetX = pad.left + 108 * dpr;
     ctx.font = `${11 * dpr}px monospace`;
 
     config.lines.forEach(line => {
-      // 色塊
       ctx.fillStyle = line.color;
-      ctx.fillRect(offsetX, pad.top - 20 * dpr, 10 * dpr, 8 * dpr);
+      ctx.fillRect(offsetX, pad.top - 20 * dpr, 9 * dpr, 8 * dpr);
 
-      // 文字
       let label = line.name;
       if (interp && interp[line.key] !== undefined) {
         label += `: ${interp[line.key].toFixed(2)} ${config.unit}`;
       }
 
       ctx.fillStyle = this.colors.text;
-      ctx.fillText(label, offsetX + 14 * dpr, pad.top - 16 * dpr);
-      offsetX += ctx.measureText(label).width + 24 * dpr;
+      ctx.fillText(label, offsetX + 12 * dpr, pad.top - 16 * dpr);
+      offsetX += ctx.measureText(label).width + 20 * dpr;
     });
 
     ctx.restore();
@@ -449,4 +582,3 @@ export class PhysicsChart {
     ctx.restore();
   }
 }
-

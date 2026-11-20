@@ -148,6 +148,15 @@
       </div>
       <div class="chart-body">
         <canvas id="physicsChartCanvas"></canvas>
+        <!-- 圖表縮放控制列 (支援 Y 軸縮放與數據區間聚焦) -->
+        <div class="chart-zoom-bar" title="滾輪縮放 Y 軸 | Shift+滾輪縮放時間軸 | 拖曳平移">
+          <button class="chart-zoom-btn active" id="btnChartFocus" title="聚焦波動區間 / 包含零點切換">🎯 聚焦</button>
+          <button class="chart-zoom-btn" id="btnChartZoomIn" title="放大 Y 軸尺度 (觀察微小起伏)">＋</button>
+          <button class="chart-zoom-btn" id="btnChartZoomOut" title="縮小 Y 軸尺度">－</button>
+          <button class="chart-zoom-btn" id="btnChartTimeIn" title="放大時間軸 (X 軸)">⏱＋</button>
+          <button class="chart-zoom-btn" id="btnChartZoomReset" title="重置縮放">↺</button>
+          <span class="chart-zoom-badge" id="chartZoomBadge">1.0x</span>
+        </div>
       </div>
     </div>
 
@@ -178,10 +187,6 @@
     <!-- 浮動圖例說明 (Legend) -->
     <div class="legend-panel" id="legendPanel">
       <div class="legend-item">
-        <span class="legend-color" style="background: #10b981;"></span>
-        <span>速度向量 $\vec{v}$ (綠色)</span>
-      </div>
-      <div class="legend-item">
         <span class="legend-color" style="background: #ef4444;"></span>
         <span>加速度向量 $\vec{a}$ (紅色)</span>
       </div>
@@ -202,7 +207,7 @@
       <div class="hud-item">
         <span class="hud-label">位置 (x, y)</span>
         <span class="hud-value" id="hudPos">0.00, 0.00 m</span>
-        <span class="hud-sub" id="hudPixelPos">0, 0 px</span>
+        <span class="hud-sub" id="hudPixelPos">距起點: 0.00 m</span>
       </div>
 
       <div class="hud-item">
@@ -471,7 +476,8 @@
       document.getElementById("hudTime").textContent = `${pt.t.toFixed(3)} s`;
       document.getElementById("hudFrame").textContent = `Frame: ${pt.index !== undefined ? pt.index : '-'}`;
       document.getElementById("hudPos").textContent = `${pt.meterX.toFixed(2)}, ${pt.meterY.toFixed(2)} m`;
-      document.getElementById("hudPixelPos").textContent = `${Math.round(pt.x)}, ${Math.round(pt.y)} px`;
+      const distM = Math.hypot(pt.meterX, pt.meterY);
+      document.getElementById("hudPixelPos").textContent = `距起點: ${distM.toFixed(2)} m`;
       document.getElementById("hudVelMag").textContent = `${pt.v.toFixed(2)} m/s`;
       document.getElementById("hudVelComponents").textContent = `vx: ${pt.vx.toFixed(2)} | vy: ${pt.vy.toFixed(2)}`;
       document.getElementById("hudAccMag").textContent = `${pt.a.toFixed(1)} m/s²`;
@@ -640,6 +646,38 @@
       physicsChart.setDrawMode(newMode);
       btnToggleChartMode.title = newMode === "dynamic" ? "目前：動態繪製模式 (點擊切換為全曲線)" : "目前：全曲線模式 (點擊切換為動態繪製)";
       btnToggleChartMode.style.color = newMode === "dynamic" ? "#38bdf8" : "#f59e0b";
+      physicsChart.render(video.currentTime);
+    };
+
+    // 圖表縮放控制列綁定
+    const btnChartFocus = document.getElementById("btnChartFocus");
+    const chartZoomBadge = document.getElementById("chartZoomBadge");
+    physicsChart.onZoomChange = ({ yZoom, xZoom, focusDataRange }) => {
+      btnChartFocus.classList.toggle("active", focusDataRange);
+      btnChartFocus.textContent = focusDataRange ? "🎯 聚焦" : "0️⃣ 含零點";
+      chartZoomBadge.textContent = xZoom > 1.05
+        ? `Y:${yZoom.toFixed(1)}x T:${xZoom.toFixed(1)}x`
+        : `${yZoom.toFixed(1)}x`;
+    };
+
+    btnChartFocus.onclick = () => {
+      physicsChart.toggleFocusMode();
+      physicsChart.render(video.currentTime);
+    };
+    document.getElementById("btnChartZoomIn").onclick = () => {
+      physicsChart.zoomY(1.4);
+      physicsChart.render(video.currentTime);
+    };
+    document.getElementById("btnChartZoomOut").onclick = () => {
+      physicsChart.zoomY(1 / 1.4);
+      physicsChart.render(video.currentTime);
+    };
+    document.getElementById("btnChartTimeIn").onclick = () => {
+      physicsChart.zoomX(1.4);
+      physicsChart.render(video.currentTime);
+    };
+    document.getElementById("btnChartZoomReset").onclick = () => {
+      physicsChart.resetZoom();
       physicsChart.render(video.currentTime);
     };
 

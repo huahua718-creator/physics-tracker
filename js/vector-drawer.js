@@ -17,9 +17,9 @@ export class VectorDrawer {
     this.vScale = options.vScale || 25; // 1 m/s = 25px
     this.aScale = options.aScale || 8;  // 1 m/s^2 = 8px
 
-    // 圖層顯示開關
+    // 圖層顯示開關 (已移除即時速度箭頭，保持大屏畫面乾淨)
     this.showGhost = options.showGhost !== undefined ? options.showGhost : true;
-    this.showVelocity = options.showVelocity !== undefined ? options.showVelocity : true;
+    this.showVelocity = false;
     this.showAcceleration = options.showAcceleration !== undefined ? options.showAcceleration : true;
     this.showValues = options.showValues !== undefined ? options.showValues : true;
 
@@ -189,23 +189,7 @@ export class VectorDrawer {
     ctx.stroke();
     ctx.restore();
 
-    // 3. 繪製速度向量 v (綠色)
-    if (this.showVelocity) {
-      // 物理世界: vx, vy (m/s) -> 乘上比例 scale
-      // 注意: vy 正值代表向上，在螢幕坐標需要取負號
-      const vxScreen = currentPoint.vx * this.vScale * params.scale;
-      const vyScreen = -currentPoint.vy * this.vScale * params.scale;
-      const vMag = currentPoint.v.toFixed(2);
-
-      this.drawArrow(center.x, center.y, vxScreen, vyScreen, {
-        color: "#10b981", // 鮮明綠
-        lineWidth: 3.5,
-        arrowLen: 14,
-        label: `v: ${vMag} m/s`
-      });
-    }
-
-    // 4. 繪製加速度向量 a (紅色)
+    // 3. 繪製加速度向量 a (紅色)
     if (this.showAcceleration) {
       // 物理世界: ax, ay (m/s^2) -> 向上為正，螢幕向下為負
       const axScreen = currentPoint.ax * this.aScale * params.scale;

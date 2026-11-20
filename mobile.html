@@ -74,8 +74,37 @@
         </div>
 
         <div class="preview-container">
-          <video id="mobileVideo" playsinline preload="auto"></video>
+          <video id="mobileVideo" playsinline muted preload="auto"></video>
           <canvas id="previewCanvas"></canvas>
+        </div>
+
+        <!-- 預覽畫面時間軸與分析開頭/結尾區間裁切 -->
+        <div style="background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #94a3b8;">
+            <span>🎞️ 預覽時間軸 (拖曳定位開頭/結尾)</span>
+            <span id="previewTimeText" style="font-family: monospace; color: #38bdf8;">0.00 / 0.00 s</span>
+          </div>
+          <input type="range" id="previewScrubber" min="0" max="2.5" step="0.01" value="0" style="width: 100%; accent-color: #38bdf8;">
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 2px;">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 0.75rem; color: #94a3b8;">分析開頭 (s)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" class="form-input-number" id="inputStartTime" value="0.00" step="0.05" min="0" style="flex: 1; width: 60px; padding: 4px 6px; font-size: 0.85rem;">
+                <button class="btn btn-secondary" id="btnSetStartTime" style="padding: 4px 8px; font-size: 0.75rem;">設為目前</button>
+              </div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 0.75rem; color: #94a3b8;">分析結尾 (s)</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" class="form-input-number" id="inputEndTime" value="2.50" step="0.05" min="0.05" style="flex: 1; width: 60px; padding: 4px 6px; font-size: 0.85rem;">
+                <button class="btn btn-secondary" id="btnSetEndTime" style="padding: 4px 8px; font-size: 0.75rem;">設為目前</button>
+              </div>
+            </div>
+          </div>
+          <div id="trimSummaryText" style="font-size: 0.75rem; color: #10b981; text-align: right;">
+            分析區間：0.00 s ~ 2.50 s (共 2.50 s)
+          </div>
         </div>
 
         <!-- 取色與尺標設定列 -->
@@ -88,23 +117,27 @@
         </div>
 
         <div class="form-row">
-          <div class="form-label">尺標實際長度 (m)：</div>
-          <input type="number" class="form-input-number" id="inputRealLength" value="1.0" step="0.1" min="0.01">
+          <div class="form-label">尺標兩點實際距離 (m)：</div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <input type="number" class="form-input-number" id="inputRealLength" value="1.0" step="0.1" min="0.01" style="width: 85px;">
+            <span style="font-size: 0.85rem; color: #94a3b8;">m</span>
+          </div>
         </div>
 
         <div class="form-row">
-          <div class="form-label">尺標像素距離 (px)：</div>
+          <div class="form-label">水平基準方向：</div>
           <div style="display: flex; align-items: center; gap: 6px;">
-            <input type="number" class="form-input-number" id="inputPixelLength" value="250" step="1" min="1" style="width: 90px;">
-            <span style="font-size: 0.75rem; color: #38bdf8; font-family: monospace;" id="pixelRatioHint">1 px ≈ 0.004 m</span>
+            <span style="font-size: 0.78rem; color: #38bdf8; font-family: monospace;" id="rulerStatusText">預設水平 1.00 m (0.0°)</span>
+            <button class="btn btn-secondary" id="btnResetHorizontal" style="padding: 4px 8px; font-size: 0.75rem;" title="將兩點校正為水平">↺ 設為水平</button>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-label">影片幀率 (FPS)：</div>
           <select id="selectFps" class="form-input-number" style="width: 100px;">
-            <option value="60">60 FPS</option>
-            <option value="120" selected>120 FPS</option>
+            <option value="30">30 FPS</option>
+            <option value="60" selected>60 FPS</option>
+            <option value="120">120 FPS</option>
             <option value="240">240 FPS</option>
           </select>
         </div>
@@ -204,14 +237,6 @@
           <span style="font-size: 0.9rem;">運動殘影頻閃 (Ghost Strobe)</span>
           <label class="toggle-switch">
             <input type="checkbox" id="toggleGhost" checked>
-            <span class="slider"></span>
-          </label>
-        </div>
-
-        <div class="switch-row">
-          <span style="font-size: 0.9rem; color: #10b981;">速度向量 $\vec{v}$ (綠色箭頭)</span>
-          <label class="toggle-switch">
-            <input type="checkbox" id="toggleVelocity" checked>
             <span class="slider"></span>
           </label>
         </div>
@@ -482,10 +507,24 @@
 
         previewCanvas.width = mobileVideo.videoWidth || 640;
         previewCanvas.height = mobileVideo.videoHeight || 360;
-        drawPreviewFrame();
+
+        // 初始化預設水平的尺標兩點 (單位：公尺)
+        initDefaultHorizontalRuler(videoType);
+
         const dur = (mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 2.5;
         document.getElementById("remoteTotalDuration").textContent = `${dur.toFixed(2)} s`;
         document.getElementById("remoteScrubber").max = dur;
+
+        // 初始化分析開頭/結尾區間控制
+        previewScrubber.max = dur;
+        previewScrubber.value = 0;
+        inputStartTime.max = dur;
+        inputStartTime.value = "0.00";
+        inputEndTime.max = dur;
+        inputEndTime.value = dur.toFixed(2);
+        updateTrimDisplay(0, dur);
+
+        drawPreviewFrame();
 
         // 同步通知大屏 (自選影片透過 sendVideoFile 傳送實體檔案，不傳無效 blob URL)
         syncManager.updateStatus({
@@ -510,45 +549,179 @@
       if (!mobileVideo.videoWidth) return;
       previewCtx.drawImage(mobileVideo, 0, 0, previewCanvas.width, previewCanvas.height);
 
-      // 繪製尺標標記
+      const realLen = Number(inputRealLength.value) || 1.0;
+
+      // 繪製尺標標記 (全部以公尺與水平傾角標示，不使用像素單位)
       if (scalePoints.length > 0) {
+        previewCtx.save();
         previewCtx.strokeStyle = "#38bdf8";
         previewCtx.fillStyle = "#38bdf8";
-        previewCtx.lineWidth = 3;
+        previewCtx.lineWidth = Math.max(3, previewCanvas.width / 320);
+        const fontSize = Math.max(14, Math.round(previewCanvas.width / 55));
+        previewCtx.font = `bold ${fontSize}px -apple-system, sans-serif`;
 
         scalePoints.forEach((p, idx) => {
           previewCtx.beginPath();
-          previewCtx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+          previewCtx.arc(p.x, p.y, Math.max(6, previewCanvas.width / 160), 0, Math.PI * 2);
           previewCtx.fill();
           previewCtx.fillText(`P${idx + 1}`, p.x + 10, p.y - 10);
         });
 
         if (scalePoints.length === 2) {
+          const p1 = scalePoints[0];
+          const p2 = scalePoints[1];
+
+          // 若有傾角，畫出淡色水平參考虛線輔助對齊
+          if (Math.abs(p2.y - p1.y) > 2) {
+            previewCtx.save();
+            previewCtx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+            previewCtx.setLineDash([6, 6]);
+            previewCtx.lineWidth = 1.5;
+            previewCtx.beginPath();
+            previewCtx.moveTo(p1.x, p1.y);
+            previewCtx.lineTo(p2.x, p1.y);
+            previewCtx.stroke();
+            previewCtx.restore();
+          }
+
+          // 主尺標線段
           previewCtx.beginPath();
-          previewCtx.moveTo(scalePoints[0].x, scalePoints[0].y);
-          previewCtx.lineTo(scalePoints[1].x, scalePoints[1].y);
+          previewCtx.moveTo(p1.x, p1.y);
+          previewCtx.lineTo(p2.x, p2.y);
           previewCtx.stroke();
+
+          // 中點標示實際長度 (公尺) 與水平傾角
+          const midX = (p1.x + p2.x) / 2;
+          const midY = (p1.y + p2.y) / 2;
+          const angleDeg = (horizonAngleRad * 180 / Math.PI).toFixed(1);
+          const label = Math.abs(Number(angleDeg)) < 0.2
+            ? `${realLen.toFixed(2)} m (水平)`
+            : `${realLen.toFixed(2)} m (${angleDeg}°)`;
+
+          const metrics = previewCtx.measureText(label);
+          previewCtx.fillStyle = "rgba(15, 23, 42, 0.85)";
+          previewCtx.fillRect(midX - metrics.width / 2 - 6, midY - fontSize - 10, metrics.width + 12, fontSize + 8);
+          previewCtx.fillStyle = "#38bdf8";
+          previewCtx.fillText(label, midX - metrics.width / 2, midY - 12);
         }
+        previewCtx.restore();
       }
     }
 
-    // 4. 取色與尺標點擊互動
+    // 4. 取色、影片裁切與兩點尺標/水平校準
     let calibrationMode = "color"; // "color" | "ruler"
+    let calibratedScalePx = 250;
+    let horizonAngleRad = 0;
+
     const btnModePickColor = document.getElementById("btnModePickColor");
     const btnModeSetRuler = document.getElementById("btnModeSetRuler");
     const inputRealLength = document.getElementById("inputRealLength");
-    const inputPixelLength = document.getElementById("inputPixelLength");
-    const pixelRatioHint = document.getElementById("pixelRatioHint");
+    const rulerStatusText = document.getElementById("rulerStatusText");
+    const btnResetHorizontal = document.getElementById("btnResetHorizontal");
 
-    function updateRatioDisplay() {
-      const realL = Number(inputRealLength.value) || 1.0;
-      const pxL = Number(inputPixelLength.value) || 250;
-      if (pxL > 0) {
-        pixelRatioHint.textContent = `1 px ≈ ${(realL / pxL).toFixed(4)} m`;
-      }
+    // 預覽區間裁切控制項
+    const previewScrubber = document.getElementById("previewScrubber");
+    const previewTimeText = document.getElementById("previewTimeText");
+    const inputStartTime = document.getElementById("inputStartTime");
+    const inputEndTime = document.getElementById("inputEndTime");
+    const trimSummaryText = document.getElementById("trimSummaryText");
+
+    function updateTrimDisplay(curTime, totalDur) {
+      const dur = totalDur || ((mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 2.5);
+      const tCur = curTime !== undefined ? curTime : (mobileVideo.currentTime || 0);
+      previewTimeText.textContent = `${tCur.toFixed(2)} / ${dur.toFixed(2)} s`;
+
+      const s = Math.max(0, Number(inputStartTime.value) || 0);
+      const e = Math.min(dur, Number(inputEndTime.value) || dur);
+      const span = Math.max(0, e - s);
+      trimSummaryText.textContent = `分析區間：${s.toFixed(2)} s ~ ${e.toFixed(2)} s (共 ${span.toFixed(2)} s)`;
     }
-    inputRealLength.oninput = updateRatioDisplay;
-    inputPixelLength.oninput = updateRatioDisplay;
+
+    previewScrubber.oninput = (e) => {
+      if (!mobileVideo.src) return;
+      const t = Number(e.target.value);
+      mobileVideo.currentTime = t;
+      updateTrimDisplay(t);
+    };
+
+    mobileVideo.addEventListener("seeked", () => {
+      drawPreviewFrame();
+      updateTrimDisplay(mobileVideo.currentTime);
+    });
+
+    document.getElementById("btnSetStartTime").onclick = () => {
+      const t = mobileVideo.currentTime || 0;
+      inputStartTime.value = t.toFixed(2);
+      if (Number(inputEndTime.value) <= t) {
+        const dur = (mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 2.5;
+        inputEndTime.value = Math.min(dur, t + 0.2).toFixed(2);
+      }
+      updateTrimDisplay();
+    };
+
+    document.getElementById("btnSetEndTime").onclick = () => {
+      const t = mobileVideo.currentTime || 0;
+      inputEndTime.value = t.toFixed(2);
+      if (Number(inputStartTime.value) >= t) {
+        inputStartTime.value = Math.max(0, t - 0.2).toFixed(2);
+      }
+      updateTrimDisplay();
+    };
+
+    inputStartTime.oninput = () => updateTrimDisplay();
+    inputEndTime.oninput = () => updateTrimDisplay();
+
+    function initDefaultHorizontalRuler(videoType = "custom") {
+      const w = previewCanvas.width || 1280;
+      const h = previewCanvas.height || 720;
+      if (videoType === "demo" && w === 1280 && h === 720) {
+        // 示範影片自帶 1.0 m 標準水平線段
+        scalePoints = [{ x: 120, y: 640 }, { x: 370, y: 640 }];
+      } else {
+        const span = Math.max(80, Math.round(w * 0.25));
+        const yPos = Math.round(h * 0.85);
+        const xStart = Math.round((w - span) / 2);
+        scalePoints = [{ x: xStart, y: yPos }, { x: xStart + span, y: yPos }];
+      }
+      recalculateRulerFromPoints();
+    }
+
+    function recalculateRulerFromPoints() {
+      if (scalePoints.length !== 2) return;
+      const [p1, p2] = scalePoints;
+      calibratedScalePx = Math.max(1, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+      // 確保由左到右計算水平夾角，保證 +Y 永遠向上
+      const leftPt = p1.x <= p2.x ? p1 : p2;
+      const rightPt = p1.x <= p2.x ? p2 : p1;
+      horizonAngleRad = Math.atan2(rightPt.y - leftPt.y, rightPt.x - leftPt.x);
+      updateRulerStatusUI();
+    }
+
+    function updateRulerStatusUI() {
+      const realL = Number(inputRealLength.value) || 1.0;
+      const angleDeg = (horizonAngleRad * 180 / Math.PI).toFixed(1);
+      const horizLabel = Math.abs(Number(angleDeg)) < 0.2 ? "水平 0.0°" : `傾角 ${angleDeg}°`;
+      rulerStatusText.textContent = `已校準 ${realL.toFixed(2)} m (${horizLabel})`;
+    }
+
+    inputRealLength.oninput = () => {
+      updateRulerStatusUI();
+      drawPreviewFrame();
+    };
+
+    btnResetHorizontal.onclick = () => {
+      if (scalePoints.length === 2) {
+        const len = Math.hypot(scalePoints[1].x - scalePoints[0].x, scalePoints[1].y - scalePoints[0].y);
+        const minX = Math.min(scalePoints[0].x, scalePoints[1].x);
+        const avgY = Math.round((scalePoints[0].y + scalePoints[1].y) / 2);
+        scalePoints = [{ x: minX, y: avgY }, { x: minX + len, y: avgY }];
+        recalculateRulerFromPoints();
+        drawPreviewFrame();
+      } else {
+        initDefaultHorizontalRuler(currentVideoType);
+        drawPreviewFrame();
+      }
+    };
 
     btnModePickColor.onclick = () => {
       calibrationMode = "color";
@@ -563,7 +736,7 @@
       btnModePickColor.className = "btn btn-secondary";
       scalePoints = [];
       drawPreviewFrame();
-      document.getElementById("previewHint").textContent = "請在畫布上依序點擊尺標兩端 (P1, P2)";
+      document.getElementById("previewHint").textContent = "請依序點擊兩點決定距離(m)與水平基準";
     };
 
     previewCanvas.onclick = (e) => {
@@ -580,15 +753,16 @@
           scalePoints = [];
         }
         scalePoints.push({ x: clickX, y: clickY });
-        drawPreviewFrame();
 
         if (scalePoints.length === 1) {
-          document.getElementById("previewHint").textContent = `已標定 P1 (${Math.round(clickX)}, ${Math.round(clickY)})，請點擊 P2`;
+          drawPreviewFrame();
+          document.getElementById("previewHint").textContent = "已設第 1 點，請點擊第 2 點決定距離與水平";
         } else if (scalePoints.length === 2) {
-          const pxDist = Math.hypot(scalePoints[1].x - scalePoints[0].x, scalePoints[1].y - scalePoints[0].y);
-          inputPixelLength.value = Math.max(1, Math.round(pxDist));
-          updateRatioDisplay();
-          document.getElementById("previewHint").textContent = `尺標已標定: ${Math.round(pxDist)} px`;
+          recalculateRulerFromPoints();
+          drawPreviewFrame();
+          const realL = Number(inputRealLength.value) || 1.0;
+          const angleDeg = (horizonAngleRad * 180 / Math.PI).toFixed(1);
+          document.getElementById("previewHint").textContent = `已標定 ${realL.toFixed(2)} m (傾角 ${angleDeg}°)`;
         }
         return;
       }
@@ -641,11 +815,20 @@
       try {
         const fps = Number(document.getElementById("selectFps").value);
         const realLen = Number(document.getElementById("inputRealLength").value) || 1.0;
-        const scalePx = Number(document.getElementById("inputPixelLength").value) || 250;
+        const scalePx = calibratedScalePx || 250;
+        const dur = (mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 2.5;
+        const startTime = Math.max(0, Number(inputStartTime.value) || 0);
+        const endTime = Math.min(dur, Number(inputEndTime.value) || dur);
+
+        if (endTime <= startTime + 0.02) {
+          alert("⚠️ 分析結尾時間必須大於開頭時間！");
+          return;
+        }
 
         videoTracker.setFPS(fps);
         videoTracker.setScale(scalePx, realLen);
         physicsEngine.setScale(scalePx, realLen);
+        physicsEngine.setHorizonAngle(horizonAngleRad);
 
         const progressBox = document.getElementById("analysisProgressBox");
         const progressBar = document.getElementById("progressBar");
@@ -657,6 +840,8 @@
         resultBox.style.display = "none";
 
         const rawPoints = await videoTracker.analyzeVideo(mobileVideo, {
+          startTime,
+          endTime,
           onProgress: (p) => {
             progressBar.style.width = `${p.percent}%`;
             progressText.textContent = `逐幀提取中... ${p.percent}%`;
@@ -797,21 +982,19 @@
       };
     });
 
-    // 圖層顯示開關
+    // 圖層顯示開關 (已移除速度箭頭選項，維持大屏畫面簡潔)
     const toggleGhost = document.getElementById("toggleGhost");
-    const toggleVelocity = document.getElementById("toggleVelocity");
     const toggleAcceleration = document.getElementById("toggleAcceleration");
 
     function pushDisplayOpts() {
       syncManager.updateDisplayOpts({
         showGhost: toggleGhost.checked,
-        showVelocity: toggleVelocity.checked,
+        showVelocity: false,
         showAcceleration: toggleAcceleration.checked
       });
     }
 
     toggleGhost.onchange = pushDisplayOpts;
-    toggleVelocity.onchange = pushDisplayOpts;
     toggleAcceleration.onchange = pushDisplayOpts;
 
     // 8. 白板調色盤
