@@ -181,6 +181,30 @@ export class VideoTracker {
 
     let lastKnownPos = null;
     let lastVelocity = { vx: 0, vy: 0 };
+    let lastCapturedTime = null;
+    let prevFrameSig = null;
+
+    // 擷取影格像素特徵，用於自動濾除因影片原生幀率低於設定 FPS 而產生的「重複影格」
+    const sampleFrameSignature = (imgData) => {
+      const data = imgData.data;
+      const sampleCount = 512;
+      const sig = new Uint8Array(sampleCount * 3);
+      const stride = Math.max(4, Math.floor(data.length / (sampleCount * 4)) * 4);
+      for (let i = 0, p = 0; i < sampleCount && p + 2 < data.length; i++, p += stride) {
+        sig[i * 3] = data[p];
+        sig[i * 3 + 1] = data[p + 1];
+        sig[i * 3 + 2] = data[p + 2];
+      }
+      return sig;
+    };
+
+    const isSameDecodedFrame = (sigA, sigB) => {
+      if (!sigA || !sigB || sigA.length !== sigB.length) return false;
+      for (let i = 0; i < sigA.length; i++) {
+        if (Math.abs(sigA[i] - sigB[i]) > 1) return false;
+      }
+      return true;
+    };
 
     try {
       video.pause();
@@ -197,14 +221,30 @@ export class VideoTracker {
         this.ctx.drawImage(video, 0, 0, this.canvas.width, this.canvas.height);
         const imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
 
+        // 若與上一張解碼影像完全相同 (例如 30 FPS 影片以 60/120 FPS 步進取樣)，跳過重複幀避免階梯與速度振盪
+        const currSig = sampleFrameSignature(imgData);
+        if (prevFrameSig && isSameDecodedFrame(prevFrameSig, currSig)) {
+          const percent = Math.min(100, Math.round(((frameIdx + 1) / totalFrames) * 100));
+          onProgress({
+            percent,
+            currentFrame: frameIdx + 1,
+            totalFrames,
+            currentTime,
+            latestPoint: lastKnownPos
+          });
+          continue;
+        }
+        prevFrameSig = currSig;
+
         // 1. 若有上一影格座標，使用速度預測中心建立局部搜尋窗口 (ROI)
         let point = null;
+        const actualDt = lastCapturedTime !== null ? Math.max(0.001, currentTime - lastCapturedTime) : dt;
         if (this.roi) {
           point = this.findCentroid(imgData, this.roi);
         } else if (lastKnownPos) {
           const searchRadius = 140; // 放寬搜尋半徑，適應彈跳大速度
-          const predX = lastKnownPos.x + lastVelocity.vx * dt;
-          const predY = lastKnownPos.y + lastVelocity.vy * dt;
+          const predX = lastKnownPos.x + lastVelocity.vx * actualDt;
+          const predY = lastKnownPos.y + lastVelocity.vy * actualDt;
           const localROI = {
             x: predX - searchRadius,
             y: predY - searchRadius,
@@ -221,13 +261,14 @@ export class VideoTracker {
         }
 
         if (point) {
-          if (lastKnownPos) {
+          if (lastKnownPos && lastCapturedTime !== null) {
             lastVelocity = {
-              vx: (point.x - lastKnownPos.x) / dt,
-              vy: (point.y - lastKnownPos.y) / dt
+              vx: (point.x - lastKnownPos.x) / actualDt,
+              vy: (point.y - lastKnownPos.y) / actualDt
             };
           }
           lastKnownPos = { x: point.x, y: point.y };
+          lastCapturedTime = currentTime;
           trajectory.push({
             t: currentTime,
             x: point.x,
@@ -235,6 +276,7 @@ export class VideoTracker {
             found: true
           });
         } else if (lastKnownPos) {
+          lastCapturedTime = currentTime;
           // 若畫面短暫丟失，使用上一位置保持連貫
           trajectory.push({
             t: currentTime,

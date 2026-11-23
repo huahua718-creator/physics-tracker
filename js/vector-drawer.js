@@ -17,10 +17,10 @@ export class VectorDrawer {
     this.vScale = options.vScale || 25; // 1 m/s = 25px
     this.aScale = options.aScale || 8;  // 1 m/s^2 = 8px
 
-    // 圖層顯示開關 (已移除即時速度箭頭，保持大屏畫面乾淨)
+    // 圖層顯示開關 (已移除速度與加速度箭頭，維持大屏投影畫面乾淨)
     this.showGhost = options.showGhost !== undefined ? options.showGhost : true;
     this.showVelocity = false;
-    this.showAcceleration = options.showAcceleration !== undefined ? options.showAcceleration : true;
+    this.showAcceleration = false;
     this.showValues = options.showValues !== undefined ? options.showValues : true;
 
     // 殘影設定
@@ -188,21 +188,6 @@ export class VectorDrawer {
     ctx.setLineDash([4, 4]);
     ctx.stroke();
     ctx.restore();
-
-    // 3. 繪製加速度向量 a (紅色)
-    if (this.showAcceleration) {
-      // 物理世界: ax, ay (m/s^2) -> 向上為正，螢幕向下為負
-      const axScreen = currentPoint.ax * this.aScale * params.scale;
-      const ayScreen = -currentPoint.ay * this.aScale * params.scale;
-      const aMag = currentPoint.a.toFixed(1);
-
-      this.drawArrow(center.x, center.y, axScreen, ayScreen, {
-        color: "#ef4444", // 鮮明紅
-        lineWidth: 3.5,
-        arrowLen: 14,
-        label: `a: ${aMag} m/s²`
-      });
-    }
   }
 
   /**

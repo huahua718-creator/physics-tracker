@@ -55,32 +55,51 @@ export class PhysicsEngine {
   }
 
   /**
-   * Savitzky-Golay 濾波器 (5 點二次多項式平滑)
-   * 卷積係數: [-3, 12, 17, 12, -3] / 35
-   * 專門用於平滑座標，同時保留拋體運動的二次多項式特徵，避免一般移動平均造成的曲率扁平化
+   * Savitzky-Golay 濾波器 (9 點二次多項式平滑，短序列退回 5 點)
+   * 9 點二次係數: [-21, 14, 39, 54, 59, 54, 39, 14, -21] / 231
+   * 5 點二次係數: [-3, 12, 17, 12, -3] / 35
+   * 專門用於平滑座標與速度，解析保留拋體運動的二次/一次多項式特徵，同時大幅壓抑高頻像素抖動雜訊
    */
   savitzkyGolaySmooth(values) {
     const n = values.length;
     if (n < 5) return [...values];
 
-    const result = new Array(n);
-    const coeffs = [-3, 12, 17, 12, -3];
-    const norm = 35;
-
-    // 前兩點採用 3 點平滑或保留原值
-    result[0] = values[0];
-    result[1] = (values[0] + 2 * values[1] + values[2]) / 4;
-
-    // 核心 5 點卷積
-    for (let i = 2; i < n - 2; i++) {
-      let sum = 0;
-      for (let j = -2; j <= 2; j++) {
-        sum += coeffs[j + 2] * values[i + j];
+    if (n < 9) {
+      const result = new Array(n);
+      const coeffs5 = [-3, 12, 17, 12, -3];
+      result[0] = values[0];
+      result[1] = (values[0] + 2 * values[1] + values[2]) / 4;
+      for (let i = 2; i < n - 2; i++) {
+        let sum = 0;
+        for (let j = -2; j <= 2; j++) sum += coeffs5[j + 2] * values[i + j];
+        result[i] = sum / 35;
       }
-      result[i] = sum / norm;
+      result[n - 2] = (values[n - 3] + 2 * values[n - 2] + values[n - 1]) / 4;
+      result[n - 1] = values[n - 1];
+      return result;
     }
 
-    // 後兩點採用邊界平滑
+    const result = new Array(n);
+    const coeffs9 = [-21, 14, 39, 54, 59, 54, 39, 14, -21];
+    const norm9 = 231;
+
+    // 邊界採用漸進平滑
+    result[0] = values[0];
+    result[1] = (values[0] + 2 * values[1] + values[2]) / 4;
+    result[2] = (-3 * values[0] + 12 * values[1] + 17 * values[2] + 12 * values[3] - 3 * values[4]) / 35;
+    result[3] = (-2 * values[0] + 3 * values[1] + 6 * values[2] + 7 * values[3] + 6 * values[4] + 3 * values[5] - 2 * values[6]) / 21;
+
+    // 核心 9 點卷積
+    for (let i = 4; i < n - 4; i++) {
+      let sum = 0;
+      for (let j = -4; j <= 4; j++) {
+        sum += coeffs9[j + 4] * values[i + j];
+      }
+      result[i] = sum / norm9;
+    }
+
+    result[n - 4] = (-2 * values[n - 7] + 3 * values[n - 6] + 6 * values[n - 5] + 7 * values[n - 4] + 6 * values[n - 3] + 3 * values[n - 2] - 2 * values[n - 1]) / 21;
+    result[n - 3] = (-3 * values[n - 5] + 12 * values[n - 4] + 17 * values[n - 3] + 12 * values[n - 2] - 3 * values[n - 1]) / 35;
     result[n - 2] = (values[n - 3] + 2 * values[n - 2] + values[n - 1]) / 4;
     result[n - 1] = values[n - 1];
 

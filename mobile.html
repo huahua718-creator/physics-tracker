@@ -240,14 +240,6 @@
             <span class="slider"></span>
           </label>
         </div>
-
-        <div class="switch-row">
-          <span style="font-size: 0.9rem; color: #ef4444;">加速度向量 $\vec{a}$ (紅色箭頭)</span>
-          <label class="toggle-switch">
-            <input type="checkbox" id="toggleAcceleration" checked>
-            <span class="slider"></span>
-          </label>
-        </div>
       </div>
     </section>
 
@@ -410,11 +402,14 @@
             startVideoTransfer();
           }
           if (processedTrajectory && processedTrajectory.length > 0) {
+            const { start: clipStart, end: clipEnd } = getTrimRange();
             syncManager.sendPhysicsData(processedTrajectory);
             syncManager.updateStatus({
               state: "analyzed",
               videoType: currentVideoType,
-              currentTime: mobileVideo.currentTime || 0,
+              clipStart,
+              clipEnd,
+              currentTime: Math.min(clipEnd, Math.max(clipStart, mobileVideo.currentTime || clipStart)),
               playbackRate: currentSpeed,
               isPlaying: isPlaying
             });
@@ -626,15 +621,30 @@
     const inputEndTime = document.getElementById("inputEndTime");
     const trimSummaryText = document.getElementById("trimSummaryText");
 
+    function getTrimRange() {
+      const dur = (mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 2.5;
+      const s = Math.max(0, Math.min(dur, Number(inputStartTime.value) || 0));
+      const e = Math.max(s + 0.05, Math.min(dur, Number(inputEndTime.value) || dur));
+      return { start: s, end: e, dur };
+    }
+
     function updateTrimDisplay(curTime, totalDur) {
       const dur = totalDur || ((mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 2.5);
       const tCur = curTime !== undefined ? curTime : (mobileVideo.currentTime || 0);
       previewTimeText.textContent = `${tCur.toFixed(2)} / ${dur.toFixed(2)} s`;
 
-      const s = Math.max(0, Number(inputStartTime.value) || 0);
-      const e = Math.min(dur, Number(inputEndTime.value) || dur);
+      const { start: s, end: e } = getTrimRange();
       const span = Math.max(0, e - s);
       trimSummaryText.textContent = `分析區間：${s.toFixed(2)} s ~ ${e.toFixed(2)} s (共 ${span.toFixed(2)} s)`;
+
+      // 同步更新播放遙控拉桿的起訖邊界
+      const rScrub = document.getElementById("remoteScrubber");
+      const rDur = document.getElementById("remoteTotalDuration");
+      if (rScrub) {
+        rScrub.min = s;
+        rScrub.max = e;
+      }
+      if (rDur) rDur.textContent = `${e.toFixed(2)} s`;
     }
 
     previewScrubber.oninput = (e) => {
@@ -887,11 +897,16 @@
       pushBtn.disabled = true;
 
       try {
+        const { start: clipStart, end: clipEnd } = getTrimRange();
+        mobileVideo.currentTime = clipStart;
+
         await syncManager.sendPhysicsData(processedTrajectory);
         await syncManager.updateStatus({
           state: "analyzed",
           videoType: currentVideoType,
-          currentTime: 0,
+          clipStart,
+          clipEnd,
+          currentTime: clipStart,
           playbackRate: currentSpeed,
           isPlaying: false
         });
@@ -929,7 +944,11 @@
     };
 
     function updatePlayState() {
+      const { start, end } = getTrimRange();
       if (isPlaying) {
+        if (mobileVideo.currentTime >= end - 0.02 || mobileVideo.currentTime < start) {
+          mobileVideo.currentTime = start;
+        }
         playIcon.textContent = "⏸️";
         playLabel.textContent = "暫停";
         mobileVideo.play();
@@ -941,33 +960,46 @@
 
       syncManager.updateStatus({
         isPlaying: isPlaying,
+        clipStart: start,
+        clipEnd: end,
         currentTime: mobileVideo.currentTime,
         playbackRate: currentSpeed
       });
     }
 
     document.getElementById("btnStepBack").onclick = () => {
+      const { start } = getTrimRange();
       const dt = 1 / Number(document.getElementById("selectFps").value);
-      mobileVideo.currentTime = Math.max(0, mobileVideo.currentTime - dt);
+      mobileVideo.currentTime = Math.max(start, mobileVideo.currentTime - dt);
       syncManager.updateStatus({ currentTime: mobileVideo.currentTime, isPlaying: false });
     };
 
     document.getElementById("btnStepForward").onclick = () => {
+      const { end } = getTrimRange();
       const dt = 1 / Number(document.getElementById("selectFps").value);
-      const dur = (mobileVideo.duration && isFinite(mobileVideo.duration)) ? mobileVideo.duration : 999;
-      mobileVideo.currentTime = Math.min(dur, mobileVideo.currentTime + dt);
+      mobileVideo.currentTime = Math.min(end, mobileVideo.currentTime + dt);
       syncManager.updateStatus({ currentTime: mobileVideo.currentTime, isPlaying: false });
     };
 
     remoteScrubber.oninput = (e) => {
-      const t = Number(e.target.value);
+      const { start, end } = getTrimRange();
+      const t = Math.min(end, Math.max(start, Number(e.target.value)));
       mobileVideo.currentTime = t;
       remoteCurrentTime.textContent = `${t.toFixed(2)} s`;
       syncManager.updateStatus({ currentTime: t });
     };
 
     mobileVideo.ontimeupdate = () => {
-      remoteScrubber.value = mobileVideo.currentTime;
+      const { start, end } = getTrimRange();
+      if (isPlaying && mobileVideo.currentTime >= end) {
+        mobileVideo.pause();
+        mobileVideo.currentTime = end;
+        isPlaying = false;
+        playIcon.textContent = "▶️";
+        playLabel.textContent = "播放";
+        syncManager.updateStatus({ isPlaying: false, currentTime: end });
+      }
+      remoteScrubber.value = Math.min(end, Math.max(start, mobileVideo.currentTime));
       remoteCurrentTime.textContent = `${mobileVideo.currentTime.toFixed(2)} s`;
     };
 
@@ -982,20 +1014,18 @@
       };
     });
 
-    // 圖層顯示開關 (已移除速度箭頭選項，維持大屏畫面簡潔)
+    // 圖層顯示開關 (已移除速度與加速度箭頭選項，維持大屏畫面簡潔)
     const toggleGhost = document.getElementById("toggleGhost");
-    const toggleAcceleration = document.getElementById("toggleAcceleration");
 
     function pushDisplayOpts() {
       syncManager.updateDisplayOpts({
         showGhost: toggleGhost.checked,
         showVelocity: false,
-        showAcceleration: toggleAcceleration.checked
+        showAcceleration: false
       });
     }
 
     toggleGhost.onchange = pushDisplayOpts;
-    toggleAcceleration.onchange = pushDisplayOpts;
 
     // 8. 白板調色盤
     document.querySelectorAll(".color-dot").forEach(dot => {

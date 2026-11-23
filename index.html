@@ -187,10 +187,6 @@
     <!-- 浮動圖例說明 (Legend) -->
     <div class="legend-panel" id="legendPanel">
       <div class="legend-item">
-        <span class="legend-color" style="background: #ef4444;"></span>
-        <span>加速度向量 $\vec{a}$ (紅色)</span>
-      </div>
-      <div class="legend-item">
         <span class="legend-color" style="background: #38bdf8;"></span>
         <span>運動殘影頻閃 (Cyan Strobe)</span>
       </div>
@@ -329,6 +325,27 @@
     let hasLoadedVideo = false;
     let isGeneratingDemo = false;
     let isReceivingVideo = false;
+    let clipStart = 0;
+    let clipEnd = null;
+
+    function getClipBounds() {
+      const dur = (video.duration && isFinite(video.duration)) ? video.duration : 10;
+      const start = Math.max(0, Math.min(dur, clipStart || 0));
+      const end = clipEnd !== null ? Math.max(start + 0.05, Math.min(dur, clipEnd)) : dur;
+      return { start, end };
+    }
+
+    function syncPlaybackBarBounds() {
+      const { start, end } = getClipBounds();
+      spbScrubber.min = start;
+      spbScrubber.max = end;
+      spbTotalDuration.textContent = clipEnd !== null ? `${end.toFixed(2)} s ✂️` : `${end.toFixed(2)} s`;
+      if (hasLoadedVideo && (video.currentTime < start || video.currentTime > end)) {
+        video.currentTime = start;
+      }
+      spbScrubber.value = Math.min(end, Math.max(start, video.currentTime));
+      spbCurrentTime.textContent = `${video.currentTime.toFixed(2)} s`;
+    }
 
     const connStatusBadge = document.getElementById("connStatusBadge");
     const standbyStatusText = document.getElementById("standbyStatusText");
@@ -400,12 +417,23 @@
         standbyStatusText.textContent = "📱 手機已載入影片，等待分析與影片傳送中...";
       }
 
+      if (status.clipStart !== undefined) {
+        clipStart = Math.max(0, Number(status.clipStart) || 0);
+      }
+      if (status.clipEnd !== undefined && status.clipEnd !== null) {
+        clipEnd = Number(status.clipEnd);
+      }
+      if (status.clipStart !== undefined || status.clipEnd !== undefined) {
+        syncPlaybackBarBounds();
+      }
+
       if (hasLoadedVideo && (status.state === "analyzed" || status.state === "playing")) {
         standbyOverlay.classList.add("hidden");
       }
 
       if (status.currentTime !== undefined && Math.abs(video.currentTime - status.currentTime) > 0.08) {
-        video.currentTime = status.currentTime;
+        const { start, end } = getClipBounds();
+        video.currentTime = Math.min(end, Math.max(start, status.currentTime));
       }
 
       if (status.playbackRate !== undefined) {
@@ -414,7 +442,11 @@
       }
 
       if (status.isPlaying !== undefined && hasLoadedVideo) {
+        const { start, end } = getClipBounds();
         if (status.isPlaying && video.paused) {
+          if (video.currentTime >= end - 0.02 || video.currentTime < start) {
+            video.currentTime = start;
+          }
           video.play().catch(e => console.warn("自動播放限制:", e));
         } else if (!status.isPlaying && !video.paused) {
           video.pause();
@@ -425,10 +457,8 @@
     syncManager.onDisplayOptsChange((opts) => {
       console.log("收到顯示選項變更:", opts);
       if (opts.showGhost !== undefined) vectorDrawer.showGhost = opts.showGhost;
-      if (opts.showVelocity !== undefined) vectorDrawer.showVelocity = opts.showVelocity;
-      if (opts.showAcceleration !== undefined) vectorDrawer.showAcceleration = opts.showAcceleration;
-      if (opts.vScale !== undefined) vectorDrawer.vScale = opts.vScale;
-      if (opts.aScale !== undefined) vectorDrawer.aScale = opts.aScale;
+      vectorDrawer.showVelocity = false;
+      vectorDrawer.showAcceleration = false;
     });
 
     syncManager.onPhysicsDataChange((trajectory) => {
@@ -453,6 +483,21 @@
 
     // 6. 核心渲染循環 (Render Loop)
     function renderLoop() {
+      // 嚴格限制播放不可超出手機端設定的 [開頭, 結尾] 區間
+      if (hasLoadedVideo && !video.paused) {
+        const { start, end } = getClipBounds();
+        if (video.currentTime < start - 0.02) {
+          video.currentTime = start;
+        } else if (video.currentTime >= end - 0.01) {
+          if (video.loop) {
+            video.currentTime = start;
+          } else {
+            video.pause();
+            video.currentTime = end;
+          }
+        }
+      }
+
       if (currentTrajectory && currentTrajectory.length > 0) {
         const curTime = video.currentTime;
         const pt = physicsEngine.interpolateAtTime(currentTrajectory, curTime);
@@ -498,6 +543,10 @@
 
     spbPlayPause.onclick = () => {
       if (video.paused) {
+        const { start, end } = getClipBounds();
+        if (video.currentTime >= end - 0.02 || video.currentTime < start) {
+          video.currentTime = start;
+        }
         video.play().catch(e => console.warn(e));
       } else {
         video.pause();
@@ -515,19 +564,27 @@
     });
 
     video.addEventListener("timeupdate", () => {
-      spbScrubber.value = video.currentTime;
+      const { start, end } = getClipBounds();
+      if (video.currentTime >= end && !video.paused) {
+        if (video.loop) {
+          video.currentTime = start;
+        } else {
+          video.pause();
+          video.currentTime = end;
+        }
+      }
+      spbScrubber.value = Math.min(end, Math.max(start, video.currentTime));
       spbCurrentTime.textContent = `${video.currentTime.toFixed(2)} s`;
     });
 
     video.addEventListener("loadeddata", () => {
-      const dur = video.duration || 1;
-      spbScrubber.max = dur;
-      spbTotalDuration.textContent = `${dur.toFixed(2)} s`;
-      physicsChart.setData(currentTrajectory, dur);
+      syncPlaybackBarBounds();
+      physicsChart.setData(currentTrajectory, video.duration || 1);
     });
 
     spbScrubber.addEventListener("input", (e) => {
-      const t = Number(e.target.value);
+      const { start, end } = getClipBounds();
+      const t = Math.min(end, Math.max(start, Number(e.target.value)));
       video.currentTime = t;
       spbCurrentTime.textContent = `${t.toFixed(2)} s`;
       physicsChart.render(t);
@@ -536,15 +593,17 @@
 
     spbStepBack.onclick = () => {
       video.pause();
+      const { start } = getClipBounds();
       const dt = 1 / 60;
-      video.currentTime = Math.max(0, video.currentTime - dt);
+      video.currentTime = Math.max(start, video.currentTime - dt);
       syncManager.updateStatus({ currentTime: video.currentTime, isPlaying: false });
     };
 
     spbStepForward.onclick = () => {
       video.pause();
+      const { end } = getClipBounds();
       const dt = 1 / 60;
-      video.currentTime = Math.min(video.duration || 10, video.currentTime + dt);
+      video.currentTime = Math.min(end, video.currentTime + dt);
       syncManager.updateStatus({ currentTime: video.currentTime, isPlaying: false });
     };
 
