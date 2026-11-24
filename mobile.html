@@ -37,6 +37,12 @@
     <button class="tab-btn" data-tab="tab-settings">4. 設定</button>
   </nav>
 
+  <!-- 網路直連不穩提醒橫幅 -->
+  <div class="wifi-warning-banner" id="wifiWarningBanner">
+    <span>📶</span>
+    <span>P2P 網路直連配對中或連線不穩，建議將<b>手機與電腦連到同一個 Wi-Fi</b>（或使用手機熱點），傳送影片更快速穩定！</span>
+  </div>
+
   <main class="main-content">
     <!-- TAB 1: 影像追蹤與物理分析 -->
     <section class="tab-pane active" id="tab-track">
@@ -60,13 +66,13 @@
       <div class="card">
         <div class="card-title">
           <span>🎯 2. 標定目標與尺標</span>
-          <span style="font-size: 0.75rem; color: #38bdf8;" id="previewHint">請點擊球體取色</span>
+          <span style="font-size: 0.75rem; color: #38bdf8;" id="previewHint">長按拖曳上方小點對準球體，放開取色</span>
         </div>
 
         <!-- 模式切換鈕 -->
         <div style="display: flex; gap: 8px; margin-bottom: 10px;">
           <button class="btn btn-primary" id="btnModePickColor" style="flex: 1; padding: 6px 8px; font-size: 0.8rem;">
-            🎯 點擊取色模式
+            🎯 拖曳取色模式
           </button>
           <button class="btn btn-secondary" id="btnModeSetRuler" style="flex: 1; padding: 6px 8px; font-size: 0.8rem;">
             📏 兩點標定尺標
@@ -389,40 +395,49 @@
       return activeVideoTransferPromise;
     }
 
+    let wifiWarningTimer = null;
+    const wifiWarningBanner = document.getElementById("wifiWarningBanner");
+
+    function startWifiWarningCountdown() {
+      clearTimeout(wifiWarningTimer);
+      wifiWarningTimer = setTimeout(() => {
+        if (!syncManager.p2pConnected && !syncManager.isFirebaseReady) {
+          wifiWarningBanner.classList.add("visible");
+        }
+      }, 6000);
+    }
+    startWifiWarningCountdown();
+
     syncManager.onConnectionChange((state) => {
       if (state.p2pConnected) {
+        clearTimeout(wifiWarningTimer);
+        wifiWarningBanner.classList.remove("visible");
         connDot.style.background = "#10b981";
         connPill.style.borderColor = "rgba(16, 185, 129, 0.4)";
         connPill.style.color = "#10b981";
         connRoomText.textContent = `🟢 P2P已連線 | ${screenId}`;
 
-        // 若手機端先前已載入影片或完成分析，連上 P2P 後自動補傳
-        if (!wasP2PConnected) {
-          if (currentVideoType === "custom" && currentVideoFile && !videoTransferDone) {
-            startVideoTransfer();
-          }
-          if (processedTrajectory && processedTrajectory.length > 0) {
-            const { start: clipStart, end: clipEnd } = getTrimRange();
-            syncManager.sendPhysicsData(processedTrajectory);
-            syncManager.updateStatus({
-              state: "analyzed",
-              videoType: currentVideoType,
-              clipStart,
-              clipEnd,
-              currentTime: Math.min(clipEnd, Math.max(clipStart, mobileVideo.currentTime || clipStart)),
-              playbackRate: currentSpeed,
-              isPlaying: isPlaying
-            });
-          }
+        // 若手機端先前已完成分析，連上 P2P 後自動補傳數據與影片
+        if (!wasP2PConnected && processedTrajectory && processedTrajectory.length > 0) {
+          pushAllToScreen({ autoSwitchTab: false });
         }
         wasP2PConnected = true;
       } else if (state.firebaseReady) {
+        clearTimeout(wifiWarningTimer);
+        wifiWarningBanner.classList.remove("visible");
         wasP2PConnected = false;
         connDot.style.background = "#38bdf8";
         connPill.style.borderColor = "rgba(56, 189, 248, 0.4)";
         connPill.style.color = "#38bdf8";
         connRoomText.textContent = `☁️ 雲端連線 | ${screenId}`;
       } else {
+        // 若連線中斷或大屏重整，允許重新傳送影片
+        if (wasP2PConnected) {
+          videoTransferDone = false;
+          wifiWarningBanner.classList.add("visible");
+        } else {
+          startWifiWarningCountdown();
+        }
         wasP2PConnected = false;
         connDot.style.background = "#f59e0b";
         connPill.style.borderColor = "rgba(245, 158, 11, 0.4)";
@@ -521,7 +536,7 @@
 
         drawPreviewFrame();
 
-        // 同步通知大屏 (自選影片透過 sendVideoFile 傳送實體檔案，不傳無效 blob URL)
+        // 同步通知大屏 (自選影片將於分析完成後一併精準傳送，避免與逐幀分析搶佔 I/O)
         syncManager.updateStatus({
           state: "ready",
           videoType: videoType,
@@ -529,18 +544,52 @@
           playbackRate: currentSpeed,
           isPlaying: false
         });
-
-        // 若為自選影片，立即開始於背景預傳送給大屏
-        if (videoType === "custom" && currentVideoFile) {
-          startVideoTransfer();
-        }
       };
 
       mobileVideo.onloadeddata = onVideoReady;
       mobileVideo.onloadedmetadata = onVideoReady;
     }
 
-    function drawPreviewFrame() {
+    // 專用離屏取色畫布 (確保取色不受準心/尺標圖形污染)
+    const colorSampleCanvas = document.createElement("canvas");
+    colorSampleCanvas.width = 16;
+    colorSampleCanvas.height = 16;
+    const colorSampleCtx = colorSampleCanvas.getContext("2d", { willReadFrequently: true });
+
+    function sampleVideoColorAt(aimX, aimY) {
+      if (!mobileVideo.videoWidth) return null;
+      const sampleRadius = 4;
+      const sx = Math.max(0, Math.floor(aimX - sampleRadius));
+      const sy = Math.max(0, Math.floor(aimY - sampleRadius));
+      const sWidth = Math.min(previewCanvas.width - sx, sampleRadius * 2 + 1);
+      const sHeight = Math.min(previewCanvas.height - sy, sampleRadius * 2 + 1);
+      if (sWidth <= 0 || sHeight <= 0) return null;
+
+      colorSampleCtx.clearRect(0, 0, 16, 16);
+      colorSampleCtx.drawImage(mobileVideo, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+      const imgData = colorSampleCtx.getImageData(0, 0, sWidth, sHeight).data;
+
+      let bestR = imgData[0], bestG = imgData[1], bestB = imgData[2];
+      let maxSaturation = -1;
+
+      for (let i = 0; i < imgData.length; i += 4) {
+        const pr = imgData[i], pg = imgData[i + 1], pb = imgData[i + 2];
+        const maxVal = Math.max(pr, pg, pb);
+        const minVal = Math.min(pr, pg, pb);
+        const sat = maxVal > 0 ? (maxVal - minVal) / maxVal : 0;
+        if (maxVal > 40 && !(pr > 215 && pg > 215 && pb > 215)) {
+          if (sat > maxSaturation) {
+            maxSaturation = sat;
+            bestR = pr;
+            bestG = pg;
+            bestB = pb;
+          }
+        }
+      }
+      return { r: bestR, g: bestG, b: bestB };
+    }
+
+    function drawPreviewFrame(aimInfo = null) {
       if (!mobileVideo.videoWidth) return;
       previewCtx.drawImage(mobileVideo, 0, 0, previewCanvas.width, previewCanvas.height);
 
@@ -599,6 +648,75 @@
           previewCtx.fillStyle = "#38bdf8";
           previewCtx.fillText(label, midX - metrics.width / 2, midY - 12);
         }
+        previewCtx.restore();
+      }
+
+      // 長按拖曳時的上方偏移準心與局部放大鏡 (避免手機螢幕太小被手指擋住)
+      if (aimInfo) {
+        const { fingerX, fingerY, aimX, aimY } = aimInfo;
+        const unit = Math.max(1, previewCanvas.width / 320);
+        const dotColor = calibrationMode === "ruler" ? "#38bdf8" : "#facc15";
+
+        previewCtx.save();
+
+        // 1. 手指觸控處虛線環
+        previewCtx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+        previewCtx.lineWidth = 1.5 * unit;
+        previewCtx.setLineDash([4 * unit, 4 * unit]);
+        previewCtx.beginPath();
+        previewCtx.arc(fingerX, fingerY, 12 * unit, 0, Math.PI * 2);
+        previewCtx.stroke();
+
+        // 2. 連接手指與上方準心小點的引導線
+        previewCtx.beginPath();
+        previewCtx.moveTo(fingerX, fingerY);
+        previewCtx.lineTo(aimX, aimY);
+        previewCtx.stroke();
+        previewCtx.setLineDash([]);
+
+        // 3. 局部 2.6x 圓形放大鏡 (顯示在準心旁，不遮擋目標)
+        const loupeR = Math.max(36, previewCanvas.width * 0.065);
+        const loupeX = aimX < previewCanvas.width * 0.25 ? aimX + loupeR + 18 * unit : (aimX > previewCanvas.width * 0.75 ? aimX - loupeR - 18 * unit : aimX);
+        const loupeY = aimY > loupeR * 2.2 ? aimY - loupeR - 18 * unit : aimY + loupeR + 24 * unit;
+        const srcHalf = loupeR / 2.6;
+
+        previewCtx.save();
+        previewCtx.beginPath();
+        previewCtx.arc(loupeX, loupeY, loupeR, 0, Math.PI * 2);
+        previewCtx.fillStyle = "#000";
+        previewCtx.fill();
+        previewCtx.clip();
+        previewCtx.drawImage(
+          mobileVideo,
+          aimX - srcHalf, aimY - srcHalf, srcHalf * 2, srcHalf * 2,
+          loupeX - loupeR, loupeY - loupeR, loupeR * 2, loupeR * 2
+        );
+        // 放大鏡中央十字線
+        previewCtx.strokeStyle = dotColor;
+        previewCtx.lineWidth = 1.5 * unit;
+        previewCtx.beginPath();
+        previewCtx.moveTo(loupeX - 8 * unit, loupeY);
+        previewCtx.lineTo(loupeX + 8 * unit, loupeY);
+        previewCtx.moveTo(loupeX, loupeY - 8 * unit);
+        previewCtx.lineTo(loupeX, loupeY + 8 * unit);
+        previewCtx.stroke();
+        previewCtx.restore();
+
+        previewCtx.strokeStyle = dotColor;
+        previewCtx.lineWidth = 2.5 * unit;
+        previewCtx.beginPath();
+        previewCtx.arc(loupeX, loupeY, loupeR, 0, Math.PI * 2);
+        previewCtx.stroke();
+
+        // 4. 手指上方實際選取小點 (Crosshair Dot)
+        previewCtx.fillStyle = dotColor;
+        previewCtx.strokeStyle = "#0f172a";
+        previewCtx.lineWidth = 2 * unit;
+        previewCtx.beginPath();
+        previewCtx.arc(aimX, aimY, 5.5 * unit, 0, Math.PI * 2);
+        previewCtx.fill();
+        previewCtx.stroke();
+
         previewCtx.restore();
       }
     }
@@ -737,7 +855,7 @@
       calibrationMode = "color";
       btnModePickColor.className = "btn btn-primary";
       btnModeSetRuler.className = "btn btn-secondary";
-      document.getElementById("previewHint").textContent = "請點擊球體取色";
+      document.getElementById("previewHint").textContent = "長按拖曳上方小點對準球體，放開取色";
     };
 
     btnModeSetRuler.onclick = () => {
@@ -746,27 +864,93 @@
       btnModePickColor.className = "btn btn-secondary";
       scalePoints = [];
       drawPreviewFrame();
-      document.getElementById("previewHint").textContent = "請依序點擊兩點決定距離(m)與水平基準";
+      document.getElementById("previewHint").textContent = "長按拖曳上方小點設定 P1，再長按拖曳設定 P2";
     };
 
-    previewCanvas.onclick = (e) => {
-      if (!mobileVideo.videoWidth) return;
+    // 長按拖曳手指上方準心互動 (同時支援手機 Touch 與電腦滑鼠拖曳)
+    let isAiming = false;
+    let activeRulerIdx = 0;
+    let latestAim = null;
 
+    function computeAimPoint(clientX, clientY) {
       const rect = previewCanvas.getBoundingClientRect();
       const scaleX = previewCanvas.width / rect.width;
       const scaleY = previewCanvas.height / rect.height;
-      const clickX = (e.clientX - rect.left) * scaleX;
-      const clickY = (e.clientY - rect.top) * scaleY;
+      const fingerX = Math.max(0, Math.min(previewCanvas.width, (clientX - rect.left) * scaleX));
+      const fingerY = Math.max(0, Math.min(previewCanvas.height, (clientY - rect.top) * scaleY));
+      // 在手指上方 50 CSS 像素處顯示實際選取點，避開手指遮擋視線
+      const offsetYCanvas = 50 * scaleY;
+      const aimX = fingerX;
+      const aimY = Math.max(4, fingerY - offsetYCanvas);
+      return { fingerX, fingerY, aimX, aimY };
+    }
+
+    function applyLiveAim(aim) {
+      if (calibrationMode === "ruler") {
+        scalePoints[activeRulerIdx] = { x: aim.aimX, y: aim.aimY };
+        if (scalePoints.length === 2) {
+          recalculateRulerFromPoints();
+          const realL = Number(inputRealLength.value) || 1.0;
+          const angleDeg = (horizonAngleRad * 180 / Math.PI).toFixed(1);
+          document.getElementById("previewHint").textContent = `移動中：${realL.toFixed(2)} m (傾角 ${angleDeg}°)`;
+        } else {
+          document.getElementById("previewHint").textContent = "拖曳對準 P1 起點，放開確認";
+        }
+      } else {
+        const sampled = sampleVideoColorAt(aim.aimX, aim.aimY);
+        if (sampled) {
+          document.getElementById("colorSwatch").style.background = `rgb(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+          document.getElementById("colorRgbText").textContent = `(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+          document.getElementById("previewHint").textContent = `對準中 RGB(${sampled.r},${sampled.g},${sampled.b})`;
+        }
+      }
+      drawPreviewFrame(aim);
+    }
+
+    function startAimDrag(clientX, clientY) {
+      if (!mobileVideo.videoWidth) return;
+      isAiming = true;
+      const aim = computeAimPoint(clientX, clientY);
+      latestAim = aim;
 
       if (calibrationMode === "ruler") {
         if (scalePoints.length >= 2) {
-          scalePoints = [];
+          scalePoints = [{ x: aim.aimX, y: aim.aimY }];
+          activeRulerIdx = 0;
+        } else if (scalePoints.length === 0) {
+          scalePoints = [{ x: aim.aimX, y: aim.aimY }];
+          activeRulerIdx = 0;
+        } else {
+          scalePoints = [scalePoints[0], { x: aim.aimX, y: aim.aimY }];
+          activeRulerIdx = 1;
         }
-        scalePoints.push({ x: clickX, y: clickY });
+      }
+      applyLiveAim(aim);
+    }
 
+    function moveAimDrag(clientX, clientY) {
+      if (!isAiming || !mobileVideo.videoWidth) return;
+      const aim = computeAimPoint(clientX, clientY);
+      latestAim = aim;
+      applyLiveAim(aim);
+    }
+
+    function endAimDrag() {
+      if (!isAiming) return;
+      isAiming = false;
+      const aim = latestAim;
+      latestAim = null;
+
+      if (!aim || !mobileVideo.videoWidth) {
+        drawPreviewFrame();
+        return;
+      }
+
+      if (calibrationMode === "ruler") {
+        scalePoints[activeRulerIdx] = { x: aim.aimX, y: aim.aimY };
         if (scalePoints.length === 1) {
           drawPreviewFrame();
-          document.getElementById("previewHint").textContent = "已設第 1 點，請點擊第 2 點決定距離與水平";
+          document.getElementById("previewHint").textContent = "已鎖定 P1，請長按拖曳設定 P2 終點";
         } else if (scalePoints.length === 2) {
           recalculateRulerFromPoints();
           drawPreviewFrame();
@@ -774,42 +958,44 @@
           const angleDeg = (horizonAngleRad * 180 / Math.PI).toFixed(1);
           document.getElementById("previewHint").textContent = `已標定 ${realL.toFixed(2)} m (傾角 ${angleDeg}°)`;
         }
-        return;
-      }
-
-      // 智慧取色：在點擊點周圍 9x9 區域內取最具色彩飽和度的像素 (自動排除白色反光高光與深色邊緣)
-      const sampleRadius = 4;
-      const sx = Math.max(0, Math.floor(clickX - sampleRadius));
-      const sy = Math.max(0, Math.floor(clickY - sampleRadius));
-      const sWidth = Math.min(previewCanvas.width - sx, sampleRadius * 2 + 1);
-      const sHeight = Math.min(previewCanvas.height - sy, sampleRadius * 2 + 1);
-      const imgData = previewCtx.getImageData(sx, sy, sWidth, sHeight).data;
-
-      let bestR = imgData[0], bestG = imgData[1], bestB = imgData[2];
-      let maxSaturation = -1;
-
-      for (let i = 0; i < imgData.length; i += 4) {
-        const pr = imgData[i], pg = imgData[i + 1], pb = imgData[i + 2];
-        const maxVal = Math.max(pr, pg, pb);
-        const minVal = Math.min(pr, pg, pb);
-        const sat = maxVal > 0 ? (maxVal - minVal) / maxVal : 0;
-        // 排除純白高光 (r, g, b > 215) 與過暗陰影
-        if (maxVal > 40 && !(pr > 215 && pg > 215 && pb > 215)) {
-          if (sat > maxSaturation) {
-            maxSaturation = sat;
-            bestR = pr;
-            bestG = pg;
-            bestB = pb;
-          }
+      } else {
+        const sampled = sampleVideoColorAt(aim.aimX, aim.aimY);
+        if (sampled) {
+          videoTracker.setTargetColor(sampled.r, sampled.g, sampled.b, 80);
+          document.getElementById("colorSwatch").style.background = `rgb(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+          document.getElementById("colorRgbText").textContent = `(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+          document.getElementById("previewHint").textContent = `已鎖定目標色 (${sampled.r},${sampled.g},${sampled.b})`;
         }
+        drawPreviewFrame();
       }
+    }
 
-      videoTracker.setTargetColor(bestR, bestG, bestB, 80);
-      document.getElementById("colorSwatch").style.background = `rgb(${bestR}, ${bestG}, ${bestB})`;
-      document.getElementById("colorRgbText").textContent = `(${bestR}, ${bestG}, ${bestB})`;
+    previewCanvas.addEventListener("touchstart", (e) => {
+      if (!mobileVideo.videoWidth || e.touches.length === 0) return;
+      e.preventDefault();
+      startAimDrag(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
 
-      document.getElementById("previewHint").textContent = `已鎖定顏色 (${bestR},${bestG},${bestB})`;
-    };
+    previewCanvas.addEventListener("touchmove", (e) => {
+      if (!isAiming || e.touches.length === 0) return;
+      e.preventDefault();
+      moveAimDrag(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+
+    window.addEventListener("touchend", endAimDrag);
+    window.addEventListener("touchcancel", endAimDrag);
+
+    previewCanvas.addEventListener("mousedown", (e) => {
+      if (!mobileVideo.videoWidth) return;
+      startAimDrag(e.clientX, e.clientY);
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!isAiming) return;
+      moveAimDrag(e.clientX, e.clientY);
+    });
+
+    window.addEventListener("mouseup", endAimDrag);
 
     // 5. 離線逐幀質心分析
     document.getElementById("btnStartAnalysis").onclick = async () => {

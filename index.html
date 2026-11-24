@@ -92,6 +92,10 @@
           </div>
         </div>
 
+        <div id="screenWifiHint" style="font-size: 0.78rem; color: #fcd34d; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); padding: 6px 12px; border-radius: 10px; line-height: 1.4;">
+          📶 若網路直連不穩或配對逾時，建議將手機與電腦連到<b>同一個 Wi-Fi</b>（或使用手機熱點）
+        </div>
+
         <div style="display: flex; gap: 10px; margin-top: 8px;">
           <button class="btn-icon" id="btnOpenMobileTab" style="background: rgba(56, 189, 248, 0.2); border-color: #38bdf8;">
             📱 本機開啟手機控制器
@@ -488,6 +492,14 @@
     const standbyPulseDot = document.getElementById("standbyPulseDot");
     const receiveProgressBox = document.getElementById("screenReceiveProgressBox");
     const receiveProgressBar = document.getElementById("screenReceiveProgressBar");
+    const screenWifiHint = document.getElementById("screenWifiHint");
+
+    video.addEventListener("error", () => {
+      if (video.error) {
+        console.error("大屏影片解碼異常:", video.error);
+        standbyStatusText.textContent = "⚠️ 影片格式無法於此瀏覽器解碼，建議改用 H.264 MP4 錄製或重新傳送";
+      }
+    });
 
     // 5. 監聽手機端連線、影片串流與同步命令
     syncManager.onConnectionChange((state) => {
@@ -495,15 +507,18 @@
         connStatusBadge.textContent = "(🟢 手機 P2P 已連線)";
         connStatusBadge.style.color = "#10b981";
         standbyPulseDot.style.background = "#10b981";
+        if (screenWifiHint) screenWifiHint.style.display = "none";
         if (!hasLoadedVideo && !isReceivingVideo) {
           standbyStatusText.textContent = "📱 手機已配對連線！請在手機端選擇影片並分析...";
         }
       } else if (state.firebaseReady) {
         connStatusBadge.textContent = "(☁️ Firebase 雲端已連線)";
         connStatusBadge.style.color = "#38bdf8";
+        if (screenWifiHint) screenWifiHint.style.display = "none";
       } else if (state.p2pStatus === "ready") {
         connStatusBadge.textContent = "(🟡 P2P 就緒 / 等待手機掃碼)";
         connStatusBadge.style.color = "#f59e0b";
+        if (screenWifiHint) screenWifiHint.style.display = "block";
       } else {
         connStatusBadge.textContent = "(本機同步中)";
         connStatusBadge.style.color = "#94a3b8";
@@ -525,7 +540,11 @@
         video.src = evt.url;
         video.load();
         hasLoadedVideo = true;
-        standbyOverlay.classList.add("hidden");
+        if (currentTrajectory.length > 0) {
+          standbyOverlay.classList.add("hidden");
+        } else {
+          standbyStatusText.textContent = "✅ 影片已接收！等待手機端同步物理軌跡...";
+        }
       }
     });
 

@@ -17,8 +17,8 @@ const DEFAULT_FIREBASE_CONFIG = {
   appId: ""
 };
 
-const CHUNK_SIZE = 64 * 1024; // WebRTC DataChannel 安全分片大小 (64 KB)
-const MAX_BUFFERED_AMOUNT = 512 * 1024; // 背壓門檻 (512 KB)
+const CHUNK_SIZE = 14 * 1024; // WebRTC 跨瀏覽器安全分片大小 (14 KB，嚴格低於 16 KB SCTP 上限)
+const MAX_BUFFERED_AMOUNT = 256 * 1024; // 背壓門檻 (256 KB)
 
 let peerJsLoaderPromise = null;
 function loadPeerJS() {
@@ -348,9 +348,14 @@ export class SyncManager {
       case "VIDEO_CHUNK": {
         const entry = this.incomingVideos.get(msg.id);
         if (!entry) return;
-        const bytes = msg.buffer instanceof ArrayBuffer
-          ? msg.buffer
-          : (msg.buffer?.buffer || msg.buffer);
+        let bytes;
+        if (msg.buffer instanceof ArrayBuffer) {
+          bytes = msg.buffer;
+        } else if (ArrayBuffer.isView(msg.buffer)) {
+          bytes = msg.buffer.buffer.slice(msg.buffer.byteOffset, msg.buffer.byteOffset + msg.buffer.byteLength);
+        } else {
+          bytes = new Uint8Array(msg.buffer);
+        }
         entry.chunks[msg.index] = bytes;
         entry.received++;
 
@@ -589,7 +594,11 @@ export class SyncManager {
 
     const totalChunks = Math.max(1, Math.ceil(size / CHUNK_SIZE));
     for (const conn of openConns) {
-      conn.send({ type: "VIDEO_START", id: transferId, name, mimeType, size, totalChunks });
+      try {
+        conn.send({ type: "VIDEO_START", id: transferId, name, mimeType, size, totalChunks });
+      } catch (e) {
+        console.warn("VIDEO_START 發送失敗:", e);
+      }
     }
 
     for (let index = 0; index < totalChunks; index++) {
@@ -597,13 +606,17 @@ export class SyncManager {
         return { sentViaP2P: false, aborted: true, sentViaLocal, transferId };
       }
 
+      const activeConns = openConns.filter(c => c.open);
+      if (activeConns.length === 0) {
+        return { sentViaP2P: false, aborted: true, disconnected: true, sentViaLocal, transferId };
+      }
+
       const start = index * CHUNK_SIZE;
       const end = Math.min(size, start + CHUNK_SIZE);
-      const buffer = await fileOrBlob.slice(start, end).arrayBuffer();
+      const rawBuf = await fileOrBlob.slice(start, end).arrayBuffer();
+      const buffer = new Uint8Array(rawBuf);
 
-      for (const conn of openConns) {
-        if (!conn.open) continue;
-        // 背壓控制，防止 WebRTC 緩衝區溢出中斷
+      for (const conn of activeConns) {
         const dc = conn.dataChannel;
         while (dc && dc.readyState === "open" && dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
           if (this.destroyed || this.activeTransferId !== transferId) {
@@ -611,20 +624,35 @@ export class SyncManager {
           }
           await new Promise(r => setTimeout(r, 20));
         }
-        conn.send({ type: "VIDEO_CHUNK", id: transferId, index, buffer });
+        if (!conn.open) continue;
+        try {
+          conn.send({ type: "VIDEO_CHUNK", id: transferId, index, buffer });
+        } catch (e) {
+          console.warn("VIDEO_CHUNK 發送異常:", e);
+          return { sentViaP2P: false, aborted: true, error: e.message, sentViaLocal, transferId };
+        }
+      }
+
+      // 每 4 片讓出主執行緒，確保手機進度條流暢繪製
+      if (index % 4 === 0) {
+        await new Promise(r => setTimeout(r, 0));
       }
 
       const percent = Math.min(100, Math.round(((index + 1) / totalChunks) * 100));
       onProgress({ percent, sentBytes: end, totalBytes: size });
     }
 
+    let anySentEnd = false;
     for (const conn of openConns) {
       if (conn.open) {
-        conn.send({ type: "VIDEO_END", id: transferId });
+        try {
+          conn.send({ type: "VIDEO_END", id: transferId });
+          anySentEnd = true;
+        } catch (e) {}
       }
     }
 
-    return { sentViaP2P: true, sentViaLocal, transferId };
+    return { sentViaP2P: anySentEnd, sentViaLocal, transferId };
   }
 
   // --- 監聽端註冊 ---
