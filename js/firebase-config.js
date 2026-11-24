@@ -20,6 +20,7 @@ const DEFAULT_FIREBASE_CONFIG = {
 const CHUNK_SIZE = 14 * 1024; // WebRTC 跨瀏覽器安全分片大小 (14 KB，嚴格低於 16 KB SCTP 上限)
 const READ_BLOCK_SIZE = 512 * 1024; // 每次從檔案預讀 512 KB 區塊，大幅減少手機 I/O 次數
 const MAX_BUFFERED_AMOUNT = 256 * 1024; // 背壓門檻 (256 KB)
+const NODE_COLORS = ["#FF595E", "#1982C4", "#8AC926", "#FFCA3A", "#9B5DE5", "#00BBF9"];
 
 let peerJsLoaderPromise = null;
 function loadPeerJS() {
@@ -68,6 +69,12 @@ export class SyncManager {
     // 發送端影片快取狀態 (避免重複傳輸同一份影片)
     this.activeTransferId = null;
 
+    // 多機節點與實驗模式狀態
+    this.connectedNodes = new Map(); // key -> { key, nodeId, color, lastSeen, conn }
+    this.activeLabMode = "VIDEO_TRACKER";
+    this.nodeId = role === "screen" ? "screen" : this.getOrCreateMobileNodeId();
+    this.nodeColor = NODE_COLORS[0];
+
     // 回呼註冊器
     this.callbacks = {
       status: [],
@@ -75,7 +82,10 @@ export class SyncManager {
       physicsData: [],
       drawEvents: [],
       videoReceive: [],
-      connection: []
+      connection: [],
+      sensorData: [],
+      labCommand: [],
+      nodes: []
     };
 
     this.initLocalChannel();
@@ -123,6 +133,16 @@ export class SyncManager {
         this.triggerCallbacks("drawEvents", data);
       } else if (type === "VIDEO_BLOB") {
         this.handleLocalVideoBlob(data);
+      } else if (type === "SENSOR_DATA") {
+        this.recordNodeSeen(data?.id || "local_node");
+        this.triggerCallbacks("sensorData", data);
+      } else if (type === "LAB_CMD") {
+        if (data?.cmd === "SET_MODE" && data.mode) {
+          this.activeLabMode = data.mode;
+        }
+        this.triggerCallbacks("labCommand", data);
+      } else if (type === "NODE_HELLO" && this.role === "screen") {
+        this.registerScreenNode(data?.key || data?.nodeId || "local_tab", null, data?.preferredId);
       }
     };
 
@@ -288,16 +308,27 @@ export class SyncManager {
       this.p2pConnections.add(conn);
       this.p2pConnected = true;
       this.p2pStatus = "connected";
+      if (this.role === "screen") {
+        this.registerScreenNode(conn.peer, conn);
+      } else {
+        try {
+          conn.send({ type: "NODE_HELLO", preferredId: this.nodeId });
+        } catch (e) {}
+      }
       this.emitConnectionState();
       console.log(`✅ P2P 通道已建立 (${this.role} -> ${conn.peer})`);
     });
 
     conn.on("data", (msg) => {
-      this.handleIncomingP2PMessage(msg);
+      this.handleIncomingP2PMessage(msg, conn);
     });
 
     const handleClose = () => {
       this.p2pConnections.delete(conn);
+      if (this.role === "screen" && this.connectedNodes.has(conn.peer)) {
+        this.connectedNodes.delete(conn.peer);
+        this.emitNodesState();
+      }
       this.p2pConnected = this.p2pConnections.size > 0;
       this.p2pStatus = this.p2pConnected ? "connected" : (this.role === "screen" ? "ready" : "waiting");
       if (!this.p2pConnected && this.incomingVideos.size > 0) {
@@ -322,10 +353,40 @@ export class SyncManager {
     conn.on("error", handleClose);
   }
 
-  handleIncomingP2PMessage(msg) {
+  handleIncomingP2PMessage(msg, sourceConn = null) {
     if (!msg || !msg.type) return;
 
     switch (msg.type) {
+      case "NODE_HELLO": {
+        if (this.role === "screen" && sourceConn) {
+          this.registerScreenNode(sourceConn.peer, sourceConn, msg.preferredId);
+        }
+        break;
+      }
+      case "NODE_ASSIGN": {
+        if (this.role === "mobile" && msg.nodeId) {
+          this.nodeId = msg.nodeId;
+          this.nodeColor = msg.color || NODE_COLORS[0];
+          this.emitConnectionState();
+          if (msg.activeLabMode) {
+            this.activeLabMode = msg.activeLabMode;
+            this.triggerCallbacks("labCommand", { cmd: "SET_MODE", mode: msg.activeLabMode });
+          }
+        }
+        break;
+      }
+      case "SENSOR_DATA": {
+        this.recordNodeSeen(msg.id, sourceConn);
+        this.triggerCallbacks("sensorData", msg);
+        break;
+      }
+      case "LAB_CMD": {
+        if (msg.data?.cmd === "SET_MODE" && msg.data.mode) {
+          this.activeLabMode = msg.data.mode;
+        }
+        this.triggerCallbacks("labCommand", msg.data);
+        break;
+      }
       case "STATUS_UPDATE":
         this.triggerCallbacks("status", msg.data);
         break;
@@ -721,7 +782,115 @@ export class SyncManager {
     return { sentViaP2P: anySentEnd, lastPercent: anySentEnd ? 100 : lastPercent, sentViaLocal, transferId };
   }
 
+  getOrCreateMobileNodeId() {
+    try {
+      let saved = sessionStorage.getItem("pt_mobile_node_id");
+      if (!saved) {
+        saved = `node_${String(Math.floor(1 + Math.random() * 99)).padStart(2, "0")}`;
+        sessionStorage.setItem("pt_mobile_node_id", saved);
+      }
+      return saved;
+    } catch (e) {
+      return "node_01";
+    }
+  }
+
+  registerScreenNode(key, conn = null) {
+    const existing = this.connectedNodes.get(key);
+    let nodeId = existing?.nodeId;
+    let color = existing?.color;
+    if (!nodeId) {
+      const usedIds = new Set([...this.connectedNodes.values()].map(n => n.nodeId));
+      let idx = 1;
+      while (usedIds.has(`node_${String(idx).padStart(2, "0")}`)) idx++;
+      nodeId = `node_${String(idx).padStart(2, "0")}`;
+      color = NODE_COLORS[(idx - 1) % NODE_COLORS.length];
+    }
+    this.connectedNodes.set(key, { key, nodeId, color, lastSeen: Date.now(), conn });
+    if (conn && conn.open) {
+      try {
+        conn.send({
+          type: "NODE_ASSIGN",
+          nodeId,
+          color,
+          activeLabMode: this.activeLabMode
+        });
+      } catch (e) {}
+    }
+    this.emitNodesState();
+  }
+
+  recordNodeSeen(nodeId, conn = null) {
+    if (!nodeId) return;
+    const key = conn?.peer || nodeId;
+    const existing = this.connectedNodes.get(key);
+    if (existing) {
+      existing.lastSeen = Date.now();
+    } else if (this.role === "screen") {
+      const idx = this.connectedNodes.size;
+      this.connectedNodes.set(key, {
+        key,
+        nodeId,
+        color: NODE_COLORS[idx % NODE_COLORS.length],
+        lastSeen: Date.now(),
+        conn
+      });
+      this.emitNodesState();
+    }
+  }
+
+  emitNodesState() {
+    this.triggerCallbacks("nodes", this.getConnectedNodes());
+  }
+
+  getConnectedNodes() {
+    return [...this.connectedNodes.values()].map(({ key, nodeId, color, lastSeen }) => ({
+      key,
+      nodeId,
+      color,
+      lastSeen
+    }));
+  }
+
+  /**
+   * 手機端傳送輕量感測器封包 (符合 WebRTC 感測器系統 JSON Payload 規格)
+   */
+  sendSensorPacket(mode, data, t = performance.now()) {
+    const packet = {
+      type: "SENSOR_DATA",
+      id: this.nodeId || "node_01",
+      mode,
+      t,
+      data
+    };
+    try { this.bc.postMessage({ type: "SENSOR_DATA", data: packet }); } catch (e) {}
+    return this.postToP2P(packet);
+  }
+
+  /**
+   * 大屏端廣播實驗模式切換或校準控制指令給所有已配對手機
+   */
+  broadcastCommand(cmdPayload) {
+    if (cmdPayload?.cmd === "SET_MODE" && cmdPayload.mode) {
+      this.activeLabMode = cmdPayload.mode;
+    }
+    try { this.bc.postMessage({ type: "LAB_CMD", data: cmdPayload }); } catch (e) {}
+    return this.postToP2P({ type: "LAB_CMD", data: cmdPayload });
+  }
+
   // --- 監聽端註冊 ---
+
+  onSensorData(cb) {
+    this.callbacks.sensorData.push(cb);
+  }
+
+  onLabCommand(cb) {
+    this.callbacks.labCommand.push(cb);
+  }
+
+  onNodesChange(cb) {
+    this.callbacks.nodes.push(cb);
+  }
 
   onStatusChange(cb) {
     this.callbacks.status.push(cb);

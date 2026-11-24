@@ -41,13 +41,31 @@ physics-tracker/
 │   ├── firebase-config.js  # BroadcastChannel / WebRTC P2P (PeerJS 14KB分片) / Firebase 三模同步
 │   ├── video-tracker.js    # 離線逐幀讀取、單/雙點加權質心辨識、示範拋體影片產生器
 │   ├── physics-engine.js   # 比例尺與傾角座標轉換、Savitzky-Golay 濾波與微積分差分
-│   ├── vector-drawer.js    # 單/雙點運動殘影頻閃 (Strobe) 與點選高亮渲染
+│   ├── vector-drawer.js    # Canvas 向量箭頭 (v, a) 與運動殘影 (Strobe) 繪製
 │   ├── physics-chart.js    # x-t / y-t、v-t、a-t 動態與全曲線繪製、縮放平移與擬合曲線顯示
 │   ├── data-analysis.js    # 最小平方法曲線擬合 (Curve Fitting) 與 SheetJS Excel 匯出
-│   └── annotation.js       # 解析度無關雙向手寫白板同步模組
+│   ├── annotation.js       # 解析度無關雙向手寫白板同步模組
+│   └── experiments/
+│       ├── protocol.js     # 6 大實驗模式常數、WakeLock 防休眠與 CSV 匯出工具
+│       ├── mobile-sensors.js # 手機端 5 大感測器採集引擎（加速度/陀螺儀/FFT/聲學碼錶/光電閘）
+│       └── screen-lab.js   # 大屏端 5 大即時感測器視覺化與多機疊圖工作區
 └── scripts/
     └── local-server.js     # 零依賴本地測試伺服器
 ```
+
+---
+
+## 🧪 擴充實驗室 Hub（單一 QR Code 切換 6 大模組）
+
+在 [index.html](index.html) 待機頁或左上角 **「🧪 實驗切換」** 抽屜可直接切換模式，所有已連線手機會同步切換至「**2. 感測實驗**」分頁（支援最多 6 台手機同時連入，以紅/藍/綠/黃等節點色區分）：
+
+1. **⚡ 三軸加速度與視重 (`ACCEL_3D`)**：3D 空間姿態向量、電梯模擬體重計（超重/失重換算）、10 秒多機 $a-t$ 折線圖、梯形積分計算 $\Delta v = \int a\,dt$。
+2. **📐 斜面力學與量角器 (`INCLINE_GYRO`)**：即時繪製傾斜角 $\theta$ 與 $mg / mg\sin\theta / N$ 分力向量；滑動瞬間自動鎖定最大靜摩擦係數 $\mu_s = \tan\theta_s$；角速度過零偵測自動計算單擺週期 $T$ 與重力加速度 $g$。
+3. **🎵 聲波示波與頻譜儀 (`AUDIO_FFT`)**：拋物線內插 0.1 Hz 精度主頻與音名辨識、128 頻段即時頻譜 / 瀑布圖切換、350～550 Hz 雙機拍頻放大視窗。
+4. **⏱️ 聲學碼錶測 $g$ 值 (`ACOUSTIC_TIMER`)**：手機本地以 AudioContext 硬體採樣率偵測拍手/撞擊雙聲觸發（含 150 ms 防回音盲區），自動計算 $\Delta t$ 與 $g = 2h/\Delta t^2$。
+5. **🚧 鏡頭光電閘計時器 (`CAM_PHOTOGATE`)**：後鏡頭中央 $20\times20$ 亮度遮光偵測，支援環境光一鍵自動校準、直線測速 $v = d/\Delta t$、雙光電閘加速度與轉盤 RPM 測量。
+
+> 📱 **iOS Safari 提醒**：受限於蘋果安全機制，大屏廣播切換模式後，請在手機端親自點擊畫面上的 **「⚡ 啟動感測器並開始實驗」** 按鈕完成動作/麥克風/鏡頭授權；請務必透過 Vercel HTTPS 網址開啟。
 
 ---
 

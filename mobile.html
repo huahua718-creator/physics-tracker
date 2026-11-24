@@ -32,9 +32,10 @@
   <!-- 功能頁籤 (Tabs) -->
   <nav class="tab-bar">
     <button class="tab-btn active" data-tab="tab-track">1. 影片追蹤</button>
-    <button class="tab-btn" data-tab="tab-remote">2. 播放遙控</button>
-    <button class="tab-btn" data-tab="tab-draw">3. 白板手寫</button>
-    <button class="tab-btn" data-tab="tab-settings">4. 設定</button>
+    <button class="tab-btn" data-tab="tab-sensors">2. 感測實驗</button>
+    <button class="tab-btn" data-tab="tab-remote">3. 播放遙控</button>
+    <button class="tab-btn" data-tab="tab-draw">4. 白板手寫</button>
+    <button class="tab-btn" data-tab="tab-settings">5. 設定</button>
   </nav>
 
   <!-- 網路直連不穩提醒橫幅 -->
@@ -219,7 +220,47 @@
       </div>
     </section>
 
-    <!-- TAB 2: 播放遙控面板 -->
+    <!-- TAB 2: 感測器物理實驗採集面板 (5 大模組) -->
+    <section class="tab-pane" id="tab-sensors">
+      <div class="card">
+        <div class="card-title">
+          <span>🧪 選擇即時感測實驗模式</span>
+          <span style="font-size: 0.72rem; color: #38bdf8;" id="mobileNodeBadge">node_01</span>
+        </div>
+        <div class="sensor-mode-grid" id="mobileSensorGrid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span id="mobileSensorTitle">⚡ 三軸加速度與視重</span>
+        </div>
+        <p class="card-desc" id="mobileSensorDesc">啟動後以 30Hz 傳送輕量感測數據至大屏，並自動鎖定螢幕常亮防休眠。</p>
+
+        <button class="sensor-gate-btn" id="btnToggleSensorRun">
+          ⚡ 啟動感測器並開始實驗
+        </button>
+
+        <div style="display: flex; gap: 8px; margin-top: 4px;" id="mobileSensorToolsRow">
+          <button class="btn btn-secondary" id="btnSensorZeroTare" style="flex: 1; padding: 8px; font-size: 0.82rem;">
+            🧭 歸零校準 (Zero/Tare)
+          </button>
+        </div>
+
+        <div id="mobileThresholdBox" style="display: none; background: rgba(0,0,0,0.25); padding: 10px; border-radius: 8px;">
+          <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #cbd5e1; margin-bottom: 4px;">
+            <span id="mobileThresholdLabel">觸發閾值</span>
+            <span id="mobileThresholdVal" style="font-family: monospace; color: #38bdf8;">--</span>
+          </div>
+          <input type="range" id="mobileThresholdSlider" style="width: 100%; accent-color: #38bdf8;">
+        </div>
+
+        <div class="sensor-live-box" id="mobileSensorStatusBox">
+          狀態：待命中（點擊上方按鈕授權並啟動）
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: 播放遙控面板 -->
     <section class="tab-pane" id="tab-remote">
       <div class="card">
         <div class="card-title">
@@ -340,6 +381,8 @@
     import { PhysicsEngine } from "./js/physics-engine.js";
     import { VideoTracker } from "./js/video-tracker.js";
     import { AnnotationLayer } from "./js/annotation.js";
+    import { LAB_MODES, LAB_MODE_ORDER } from "./js/experiments/protocol.js";
+    import { MobileSensorLab } from "./js/experiments/mobile-sensors.js";
 
     // 1. 初始化房間配對 PIN
     const urlParams = new URLSearchParams(window.location.search);
@@ -1394,6 +1437,7 @@
     };
 
     window.addEventListener("beforeunload", () => {
+      mobileSensorLab.stop();
       syncManager.destroy();
     });
 
@@ -1408,6 +1452,157 @@
         if (ok) alert("Firebase 雲端同步設定成功並已連線！");
       });
     };
+
+    // 10. 5 大感測器實驗控制引擎整合 (含大屏廣播自動切換與 iOS 手勢授權閘門)
+    const SENSOR_MODE_IDS = LAB_MODE_ORDER.filter(id => id !== "VIDEO_TRACKER");
+    let selectedSensorMode = SENSOR_MODE_IDS[0];
+
+    const mobileSensorGrid = document.getElementById("mobileSensorGrid");
+    const mobileSensorTitle = document.getElementById("mobileSensorTitle");
+    const mobileSensorDesc = document.getElementById("mobileSensorDesc");
+    const btnToggleSensorRun = document.getElementById("btnToggleSensorRun");
+    const btnSensorZeroTare = document.getElementById("btnSensorZeroTare");
+    const mobileThresholdBox = document.getElementById("mobileThresholdBox");
+    const mobileThresholdLabel = document.getElementById("mobileThresholdLabel");
+    const mobileThresholdVal = document.getElementById("mobileThresholdVal");
+    const mobileThresholdSlider = document.getElementById("mobileThresholdSlider");
+    const mobileSensorStatusBox = document.getElementById("mobileSensorStatusBox");
+    const mobileNodeBadge = document.getElementById("mobileNodeBadge");
+
+    const mobileSensorLab = new MobileSensorLab(syncManager, {
+      onTelemetry: (text) => {
+        mobileSensorStatusBox.textContent = `🟢 傳送中 [${syncManager.nodeId}]：${text}`;
+      },
+      onStateChange: ({ running, mode, error }) => {
+        btnToggleSensorRun.classList.toggle("running", running);
+        btnToggleSensorRun.textContent = running ? "⏹ 停止實驗並釋放感測器" : "⚡ 啟動感測器並開始實驗";
+        if (error) {
+          mobileSensorStatusBox.textContent = `⚠️ 啟動失敗：${error}`;
+          mobileSensorStatusBox.style.color = "#fca5a5";
+        } else if (running) {
+          mobileSensorStatusBox.style.color = "#6ee7b7";
+          mobileSensorStatusBox.textContent = `🟢 已啟動 ${LAB_MODES[mode]?.shortTitle || mode}（螢幕常亮鎖定中）`;
+        } else {
+          mobileSensorStatusBox.style.color = "#94a3b8";
+          mobileSensorStatusBox.textContent = "狀態：已待機（可點上方按鈕重新啟動）";
+        }
+      }
+    });
+
+    function selectMobileSensorMode(modeId) {
+      if (!LAB_MODES[modeId] || modeId === "VIDEO_TRACKER") return;
+      selectedSensorMode = modeId;
+      const info = LAB_MODES[modeId];
+
+      mobileSensorGrid.querySelectorAll(".sensor-mode-chip").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.sensorMode === modeId);
+      });
+      mobileSensorTitle.textContent = `${info.icon} ${info.title}`;
+      mobileSensorDesc.textContent = info.desc;
+
+      btnSensorZeroTare.style.display = (modeId === "ACCEL_3D" || modeId === "INCLINE_GYRO" || modeId === "CAM_PHOTOGATE") ? "block" : "none";
+      btnSensorZeroTare.textContent = modeId === "CAM_PHOTOGATE" ? "🔆 本機環境光自動校準" : "🧭 歸零校準 (Zero/Tare)";
+
+      if (modeId === "ACOUSTIC_TIMER") {
+        mobileThresholdBox.style.display = "block";
+        mobileThresholdLabel.textContent = "聲響觸發閾值";
+        mobileThresholdSlider.min = 0.05;
+        mobileThresholdSlider.max = 0.85;
+        mobileThresholdSlider.step = 0.05;
+        mobileThresholdSlider.value = mobileSensorLab.acousticThreshold;
+        mobileThresholdVal.textContent = `${Math.round(mobileSensorLab.acousticThreshold * 100)}%`;
+      } else if (modeId === "CAM_PHOTOGATE") {
+        mobileThresholdBox.style.display = "block";
+        mobileThresholdLabel.textContent = "遮光亮度閾值";
+        mobileThresholdSlider.min = 10;
+        mobileThresholdSlider.max = 240;
+        mobileThresholdSlider.step = 5;
+        mobileThresholdSlider.value = mobileSensorLab.photogateThreshold;
+        mobileThresholdVal.textContent = `${mobileSensorLab.photogateThreshold} / 255`;
+      } else {
+        mobileThresholdBox.style.display = "none";
+      }
+    }
+
+    mobileSensorGrid.innerHTML = SENSOR_MODE_IDS.map(id => {
+      const m = LAB_MODES[id];
+      return `<button class="sensor-mode-chip" data-sensor-mode="${id}"><span>${m.icon}</span><span>${m.shortTitle}</span></button>`;
+    }).join("");
+
+    mobileSensorGrid.querySelectorAll(".sensor-mode-chip").forEach(btn => {
+      btn.onclick = async () => {
+        await mobileSensorLab.stop();
+        selectMobileSensorMode(btn.dataset.sensorMode);
+      };
+    });
+    selectMobileSensorMode(selectedSensorMode);
+
+    btnToggleSensorRun.onclick = async () => {
+      if (mobileSensorLab.running) {
+        await mobileSensorLab.stop();
+      } else {
+        await mobileSensorLab.start(selectedSensorMode);
+      }
+    };
+
+    btnSensorZeroTare.onclick = () => {
+      mobileSensorLab.zeroTare();
+      if (selectedSensorMode === "CAM_PHOTOGATE") {
+        mobileThresholdSlider.value = mobileSensorLab.photogateThreshold;
+        mobileThresholdVal.textContent = `${mobileSensorLab.photogateThreshold} / 255`;
+      }
+      mobileSensorStatusBox.textContent = "✅ 已完成歸零/校準！";
+    };
+
+    mobileThresholdSlider.oninput = (e) => {
+      const val = Number(e.target.value);
+      if (selectedSensorMode === "ACOUSTIC_TIMER") {
+        mobileSensorLab.setAcousticThreshold(val);
+        mobileThresholdVal.textContent = `${Math.round(val * 100)}%`;
+      } else if (selectedSensorMode === "CAM_PHOTOGATE") {
+        mobileSensorLab.setPhotogateThreshold(val);
+        mobileThresholdVal.textContent = `${val} / 255`;
+      }
+    };
+
+    // 接收大屏廣播切換模式與校準指令
+    syncManager.onLabCommand(async (cmdObj) => {
+      if (!cmdObj || !cmdObj.cmd) return;
+      if (cmdObj.cmd === "SET_MODE" && cmdObj.mode) {
+        if (cmdObj.mode === "VIDEO_TRACKER") {
+          await mobileSensorLab.stop();
+          document.querySelector('[data-tab="tab-track"]')?.click();
+        } else if (LAB_MODES[cmdObj.mode]) {
+          if (mobileSensorLab.running && mobileSensorLab.activeMode !== cmdObj.mode) {
+            await mobileSensorLab.stop();
+          }
+          selectMobileSensorMode(cmdObj.mode);
+          document.querySelector('[data-tab="tab-sensors"]')?.click();
+        }
+      } else if (cmdObj.cmd === "ZERO_TARE") {
+        mobileSensorLab.zeroTare();
+      } else if (cmdObj.cmd === "SET_ACOUSTIC_THRESHOLD") {
+        mobileSensorLab.setAcousticThreshold(cmdObj.threshold);
+        if (selectedSensorMode === "ACOUSTIC_TIMER") {
+          mobileThresholdSlider.value = cmdObj.threshold;
+          mobileThresholdVal.textContent = `${Math.round(cmdObj.threshold * 100)}%`;
+        }
+      } else if (cmdObj.cmd === "SET_PHOTOGATE_THRESHOLD") {
+        mobileSensorLab.setPhotogateThreshold(cmdObj.threshold);
+        if (selectedSensorMode === "CAM_PHOTOGATE") {
+          mobileThresholdSlider.value = cmdObj.threshold;
+          mobileThresholdVal.textContent = `${cmdObj.threshold} / 255`;
+        }
+      }
+    });
+
+    // 顯示大屏分配的節點編號 (node_01..)
+    syncManager.onConnectionChange(() => {
+      if (mobileNodeBadge && syncManager.nodeId) {
+        mobileNodeBadge.textContent = `${syncManager.nodeId}`;
+        mobileNodeBadge.style.color = syncManager.nodeColor || "#38bdf8";
+      }
+    });
   </script>
 </body>
 </html>

@@ -81,16 +81,18 @@ body {
   display: flex;
   background: var(--surface-color);
   border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
 }
 
 .tab-btn {
   flex: 1;
-  padding: 12px 6px;
+  padding: 11px 4px;
   border: none;
   background: transparent;
   color: var(--text-sub);
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
   border-bottom: 3px solid transparent;
   transition: all 0.2s;
@@ -434,4 +436,60 @@ input:checked + .slider:before {
 .color-dot.active {
   border-color: #fff;
   transform: scale(1.15);
+}
+
+/* 感測器實驗模式分頁與卡片 */
+.sensor-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.sensor-mode-chip {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 10px 8px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.sensor-mode-chip.active {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: #38bdf8;
+  color: #fff;
+}
+
+.sensor-gate-btn {
+  width: 100%;
+  padding: 16px 12px;
+  font-size: 1rem;
+  font-weight: 800;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  color: #0f172a;
+}
+
+.sensor-gate-btn.running {
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  color: #fff;
+}
+
+.sensor-live-box {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 10px;
+  padding: 12px;
+  font-family: monospace;
+  font-size: 0.82rem;
+  color: #6ee7b7;
+  line-height: 1.5;
 }

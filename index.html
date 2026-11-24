@@ -33,6 +33,9 @@
     </div>
 
     <div class="top-actions">
+      <button class="btn-icon" id="btnToggleExpDrawer" style="background: rgba(56, 189, 248, 0.16); border-color: #38bdf8;" title="切換物理實驗模組 (影像追蹤 / 5大感測器)">
+        🧪 實驗切換
+      </button>
       <button class="btn-icon" id="btnToggleAnalysisView" title="切換數據分析頁面 (左1/3表格 + 右2/3圖表 + 擬合)">
         📑 數據分析
       </button>
@@ -110,8 +113,28 @@
             📂 載入專案檔
           </button>
         </div>
+
+        <div style="width: 100%; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px; margin-top: 4px;">
+          <div style="font-size: 0.82rem; color: #cbd5e1; font-weight: 700; text-align: left; margin-bottom: 4px;">
+            🧭 物理實驗室 Hub（配對手機後一鍵切換所有實驗，免重掃 QR Code）：
+          </div>
+          <div class="standby-hub-grid" id="standbyHubGrid"></div>
+        </div>
       </div>
     </div>
+
+    <!-- 左側實驗模式切換抽屜 -->
+    <aside class="exp-mode-drawer hidden" id="expModeDrawer">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">
+        <span style="font-weight: 800; font-size: 0.96rem; color: #38bdf8;">🧪 實驗模式切換</span>
+        <button class="btn-icon" id="btnCloseExpDrawer" style="padding: 3px 8px;">✕</button>
+      </div>
+      <div id="drawerNodesRow" style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 0.75rem; color: #94a3b8;"></div>
+      <div id="drawerExpList" style="display: flex; flex-direction: column; gap: 8px;"></div>
+    </aside>
+
+    <!-- 5 大感測器實驗工作區 (ACCEL_3D / INCLINE_GYRO / AUDIO_FFT / ACOUSTIC_TIMER / CAM_PHOTOGATE) -->
+    <section class="sensor-lab-workspace hidden" id="sensorLabWorkspace"></section>
 
     <!-- 大屏端即時繪圖與選點工具列 -->
     <div class="screen-draw-toolbar" id="screenDrawToolbar">
@@ -417,6 +440,8 @@
     import { VideoTracker } from "./js/video-tracker.js";
     import { PhysicsChart } from "./js/physics-chart.js";
     import { computeCurveFit, exportTrajectoryToExcel } from "./js/data-analysis.js";
+    import { LAB_MODES, LAB_MODE_ORDER } from "./js/experiments/protocol.js";
+    import { ScreenSensorLab } from "./js/experiments/screen-lab.js";
 
     // 1. 初始化房間 PIN 碼 (取 URL 參數或隨機 6 碼)
     const urlParams = new URLSearchParams(window.location.search);
@@ -1718,6 +1743,97 @@
         }
       }
     });
+
+    // 12. 實驗 Hub 入口、左側模式切換抽屜與 5 大即時感測器模組整合
+    const sensorLabWorkspace = document.getElementById("sensorLabWorkspace");
+    const sensorLab = new ScreenSensorLab(sensorLabWorkspace, syncManager);
+    const expModeDrawer = document.getElementById("expModeDrawer");
+    const standbyHubGrid = document.getElementById("standbyHubGrid");
+    const drawerExpList = document.getElementById("drawerExpList");
+    const drawerNodesRow = document.getElementById("drawerNodesRow");
+
+    let currentLabMode = urlParams.get("mode") && LAB_MODES[urlParams.get("mode")]
+      ? urlParams.get("mode")
+      : "VIDEO_TRACKER";
+
+    function switchLabMode(modeId, { broadcast = true } = {}) {
+      if (!LAB_MODES[modeId]) return;
+      currentLabMode = modeId;
+
+      document.querySelectorAll("[data-lab-mode]").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.labMode === modeId);
+      });
+
+      if (modeId === "VIDEO_TRACKER") {
+        sensorLab.setMode("VIDEO_TRACKER");
+        if (!hasLoadedVideo && currentTrajectory.length === 0) {
+          standbyOverlay.classList.remove("hidden");
+        }
+      } else {
+        analysisWorkspace.classList.add("hidden");
+        document.getElementById("btnToggleAnalysisView").classList.remove("active");
+        standbyOverlay.classList.add("hidden");
+        sensorLab.setMode(modeId);
+      }
+
+      expModeDrawer.classList.add("hidden");
+      if (broadcast) {
+        syncManager.broadcastCommand({ cmd: "SET_MODE", mode: modeId });
+      }
+    }
+
+    function renderLabHubCards() {
+      standbyHubGrid.innerHTML = LAB_MODE_ORDER.map(id => {
+        const m = LAB_MODES[id];
+        return `
+          <button class="hub-card-btn ${currentLabMode === id ? "active" : ""}" data-lab-mode="${id}" style="--hub-accent: ${m.color};">
+            <div class="hub-card-title"><span>${m.icon}</span><span>${m.title}</span></div>
+            <div class="hub-card-sub">${m.unit}</div>
+          </button>
+        `;
+      }).join("");
+
+      drawerExpList.innerHTML = LAB_MODE_ORDER.map(id => {
+        const m = LAB_MODES[id];
+        return `
+          <button class="drawer-exp-item ${currentLabMode === id ? "active" : ""}" data-lab-mode="${id}" style="--hub-accent: ${m.color};">
+            <div style="font-weight:700;font-size:0.86rem;">${m.icon} ${m.title}</div>
+            <div style="font-size:0.72rem;color:#94a3b8;">${m.unit}</div>
+          </button>
+        `;
+      }).join("");
+
+      document.querySelectorAll("[data-lab-mode]").forEach(btn => {
+        btn.onclick = () => switchLabMode(btn.dataset.labMode, { broadcast: true });
+      });
+    }
+    renderLabHubCards();
+
+    document.getElementById("btnToggleExpDrawer").onclick = () => {
+      expModeDrawer.classList.toggle("hidden");
+    };
+    document.getElementById("btnCloseExpDrawer").onclick = () => {
+      expModeDrawer.classList.add("hidden");
+    };
+
+    syncManager.onSensorData((pkt) => {
+      sensorLab.handleSensorPacket(pkt);
+      if (pkt.mode && pkt.mode !== currentLabMode && LAB_MODES[pkt.mode]) {
+        switchLabMode(pkt.mode, { broadcast: false });
+      }
+    });
+
+    syncManager.onNodesChange((nodes) => {
+      if (!drawerNodesRow) return;
+      drawerNodesRow.innerHTML = nodes.length === 0
+        ? "<span>尚無手機節點連線</span>"
+        : nodes.map(n => `<span class="lab-node-pill" style="border-color:${n.color};color:${n.color};">● ${n.nodeId}</span>`).join("");
+      sensorLab.refreshNodeBadges();
+    });
+
+    if (currentLabMode !== "VIDEO_TRACKER") {
+      switchLabMode(currentLabMode, { broadcast: false });
+    }
   </script>
 </body>
 </html>
