@@ -217,15 +217,14 @@ export function computeCurveFit(trajectory, targetKey = "meterY", modelType = "q
 }
 
 /**
- * 將物理數據與擬合結果匯出為真正的 Excel (.xlsx) 檔案 (若離線則自動降級為 UTF-8 BOM CSV)
+ * 將物理數據與擬合結果匯出為真正的 Excel (.xlsx) 檔案 (支援雙點比較多工作表，離線自動降級 CSV)
  */
-export async function exportTrajectoryToExcel(trajectory, fitResult = null, filenamePrefix = "physics-tracker") {
+export async function exportTrajectoryToExcel(trajectory, fitResult = null, filenamePrefix = "physics-tracker", secondaryTrajectory = null) {
   if (!trajectory || trajectory.length === 0) {
     throw new Error("目前沒有可匯出的物理數據");
   }
 
-  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-  const rows = trajectory.map((pt, idx) => ({
+  const buildRows = (traj) => traj.map((pt, idx) => ({
     "影格序號": pt.index !== undefined ? pt.index : idx,
     "時間 t (s)": Number(pt.t.toFixed(4)),
     "X位移 x (m)": Number(pt.meterX.toFixed(4)),
@@ -239,17 +238,49 @@ export async function exportTrajectoryToExcel(trajectory, fitResult = null, file
     "合加速度 |a| (m/s²)": Number(pt.a.toFixed(4))
   }));
 
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const rows = buildRows(trajectory);
+  const hasSecondary = Array.isArray(secondaryTrajectory) && secondaryTrajectory.length > 0;
+
   try {
     const XLSX = await loadSheetJS();
     const wb = XLSX.utils.book_new();
-
-    const wsData = XLSX.utils.json_to_sheet(rows);
-    wsData["!cols"] = [
+    const colWidths = [
       { wch: 10 }, { wch: 13 }, { wch: 13 }, { wch: 13 },
       { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 16 },
       { wch: 17 }, { wch: 17 }, { wch: 18 }
     ];
-    XLSX.utils.book_append_sheet(wb, wsData, "物理軌跡數據");
+
+    const wsData = XLSX.utils.json_to_sheet(rows);
+    wsData["!cols"] = colWidths;
+    XLSX.utils.book_append_sheet(wb, wsData, hasSecondary ? "目標A_物理軌跡" : "物理軌跡數據");
+
+    if (hasSecondary) {
+      const rowsB = buildRows(secondaryTrajectory);
+      const wsB = XLSX.utils.json_to_sheet(rowsB);
+      wsB["!cols"] = colWidths;
+      XLSX.utils.book_append_sheet(wb, wsB, "目標B_物理軌跡");
+
+      const pairCount = Math.min(trajectory.length, secondaryTrajectory.length);
+      const diffRows = [];
+      for (let i = 0; i < pairCount; i++) {
+        const a = trajectory[i];
+        const b = secondaryTrajectory[i];
+        diffRows.push({
+          "影格序號": i,
+          "時間 t (s)": Number(a.t.toFixed(4)),
+          "xB - xA (m)": Number((b.meterX - a.meterX).toFixed(4)),
+          "yB - yA (m)": Number((b.meterY - a.meterY).toFixed(4)),
+          "兩點距離 d_AB (m)": Number(Math.hypot(b.meterX - a.meterX, b.meterY - a.meterY).toFixed(4)),
+          "vxB - vxA (m/s)": Number((b.vx - a.vx).toFixed(4)),
+          "vyB - vyA (m/s)": Number((b.vy - a.vy).toFixed(4)),
+          "相對速率 |vB-vA| (m/s)": Number(Math.hypot(b.vx - a.vx, b.vy - a.vy).toFixed(4))
+        });
+      }
+      const wsDiff = XLSX.utils.json_to_sheet(diffRows);
+      wsDiff["!cols"] = [{ wch: 10 }, { wch: 13 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 20 }];
+      XLSX.utils.book_append_sheet(wb, wsDiff, "雙點比較_差值");
+    }
 
     if (fitResult) {
       const modelNames = {

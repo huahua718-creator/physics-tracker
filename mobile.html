@@ -69,6 +69,26 @@
           <span style="font-size: 0.75rem; color: #38bdf8;" id="previewHint">長按拖曳上方小點對準球體，放開取色</span>
         </div>
 
+        <!-- 追蹤模式切換 (單點 vs 雙點比較) -->
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+          <button class="btn btn-primary" id="btnTrackSingle" style="flex: 1; padding: 6px 8px; font-size: 0.8rem;">
+            🔵 單點追蹤
+          </button>
+          <button class="btn btn-secondary" id="btnTrackDual" style="flex: 1; padding: 6px 8px; font-size: 0.8rem;">
+            🔴🔵 雙點比較 (A+B)
+          </button>
+        </div>
+
+        <!-- 雙點模式取色對象切換 -->
+        <div id="dualTargetPickerRow" style="display: none; gap: 8px; margin-bottom: 8px;">
+          <button class="btn btn-primary" id="btnPickTargetA" style="flex: 1; padding: 5px 8px; font-size: 0.78rem; border: 1.5px solid #38bdf8;">
+            🎯 選取點 A 色
+          </button>
+          <button class="btn btn-secondary" id="btnPickTargetB" style="flex: 1; padding: 5px 8px; font-size: 0.78rem; border: 1.5px solid rgba(251, 113, 133, 0.5);">
+            🎯 選取點 B 色
+          </button>
+        </div>
+
         <!-- 模式切換鈕 -->
         <div style="display: flex; gap: 8px; margin-bottom: 10px;">
           <button class="btn btn-primary" id="btnModePickColor" style="flex: 1; padding: 6px 8px; font-size: 0.8rem;">
@@ -115,10 +135,18 @@
 
         <!-- 取色與尺標設定列 -->
         <div class="form-row">
-          <div class="form-label">目標色彩 (RGB)：</div>
+          <div class="form-label" id="colorLabelA">目標色彩 (RGB)：</div>
           <div class="color-swatch-box">
             <div class="color-swatch" id="colorSwatch"></div>
             <span id="colorRgbText" style="font-family: monospace; font-size: 0.8rem;">(255, 60, 40)</span>
+          </div>
+        </div>
+
+        <div class="form-row" id="colorRowB" style="display: none;">
+          <div class="form-label">點 B 色彩 (RGB)：</div>
+          <div class="color-swatch-box">
+            <div class="color-swatch" id="colorSwatchB" style="background: rgb(56, 189, 248);"></div>
+            <span id="colorRgbTextB" style="font-family: monospace; font-size: 0.8rem;">(56, 189, 248)</span>
           </div>
         </div>
 
@@ -333,6 +361,11 @@
     const mobileDrawCanvas = document.getElementById("mobileDrawCanvas");
 
     let processedTrajectory = [];
+    let processedTrajectoryB = [];
+    let trackingMode = "single"; // "single" | "dual"
+    let activePickTarget = "A"; // "A" | "B"
+    let targetColorA = { r: 255, g: 60, b: 40 };
+    let targetColorB = { r: 56, g: 189, b: 248 };
     let scalePoints = [];
     let isPlaying = false;
     let currentSpeed = 0.25;
@@ -668,7 +701,9 @@
       if (aimInfo) {
         const { fingerX, fingerY, aimX, aimY } = aimInfo;
         const unit = Math.max(1, previewCanvas.width / 320);
-        const dotColor = calibrationMode === "ruler" ? "#38bdf8" : "#facc15";
+        const dotColor = calibrationMode === "ruler"
+          ? "#38bdf8"
+          : (trackingMode === "dual" && activePickTarget === "B" ? "#fb7185" : "#facc15");
 
         previewCtx.save();
 
@@ -738,6 +773,52 @@
     let calibrationMode = "color"; // "color" | "ruler"
     let calibratedScalePx = 250;
     let horizonAngleRad = 0;
+
+    const btnTrackSingle = document.getElementById("btnTrackSingle");
+    const btnTrackDual = document.getElementById("btnTrackDual");
+    const dualTargetPickerRow = document.getElementById("dualTargetPickerRow");
+    const btnPickTargetA = document.getElementById("btnPickTargetA");
+    const btnPickTargetB = document.getElementById("btnPickTargetB");
+    const colorRowB = document.getElementById("colorRowB");
+    const colorLabelA = document.getElementById("colorLabelA");
+
+    function updateTrackingModeUI() {
+      const isDual = trackingMode === "dual";
+      btnTrackSingle.className = isDual ? "btn btn-secondary" : "btn btn-primary";
+      btnTrackDual.className = isDual ? "btn btn-primary" : "btn btn-secondary";
+      dualTargetPickerRow.style.display = isDual ? "flex" : "none";
+      colorRowB.style.display = isDual ? "flex" : "none";
+      colorLabelA.textContent = isDual ? "點 A 色彩 (RGB)：" : "目標色彩 (RGB)：";
+      btnPickTargetA.className = activePickTarget === "A" ? "btn btn-primary" : "btn btn-secondary";
+      btnPickTargetB.className = activePickTarget === "B" ? "btn btn-primary" : "btn btn-secondary";
+    }
+
+    btnTrackSingle.onclick = () => {
+      trackingMode = "single";
+      activePickTarget = "A";
+      updateTrackingModeUI();
+    };
+    btnTrackDual.onclick = () => {
+      trackingMode = "dual";
+      updateTrackingModeUI();
+      document.getElementById("previewHint").textContent = "雙點模式：請分別選取點 A 與點 B 顏色（建議兩物體不同色）";
+    };
+    btnPickTargetA.onclick = () => {
+      activePickTarget = "A";
+      calibrationMode = "color";
+      btnModePickColor.className = "btn btn-primary";
+      btnModeSetRuler.className = "btn btn-secondary";
+      updateTrackingModeUI();
+      document.getElementById("previewHint").textContent = "長按拖曳上方小點對準「目標 A」，放開取色";
+    };
+    btnPickTargetB.onclick = () => {
+      activePickTarget = "B";
+      calibrationMode = "color";
+      btnModePickColor.className = "btn btn-primary";
+      btnModeSetRuler.className = "btn btn-secondary";
+      updateTrackingModeUI();
+      document.getElementById("previewHint").textContent = "長按拖曳上方小點對準「目標 B」，放開取色";
+    };
 
     const btnModePickColor = document.getElementById("btnModePickColor");
     const btnModeSetRuler = document.getElementById("btnModeSetRuler");
@@ -915,9 +996,13 @@
       } else {
         const sampled = sampleVideoColorAt(aim.aimX, aim.aimY);
         if (sampled) {
-          document.getElementById("colorSwatch").style.background = `rgb(${sampled.r}, ${sampled.g}, ${sampled.b})`;
-          document.getElementById("colorRgbText").textContent = `(${sampled.r}, ${sampled.g}, ${sampled.b})`;
-          document.getElementById("previewHint").textContent = `對準中 RGB(${sampled.r},${sampled.g},${sampled.b})`;
+          const isB = trackingMode === "dual" && activePickTarget === "B";
+          const swatchEl = document.getElementById(isB ? "colorSwatchB" : "colorSwatch");
+          const rgbTextEl = document.getElementById(isB ? "colorRgbTextB" : "colorRgbText");
+          swatchEl.style.background = `rgb(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+          rgbTextEl.textContent = `(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+          const tag = trackingMode === "dual" ? `點${activePickTarget} ` : "";
+          document.getElementById("previewHint").textContent = `對準中 ${tag}RGB(${sampled.r},${sampled.g},${sampled.b})`;
         }
       }
       drawPreviewFrame(aim);
@@ -977,10 +1062,20 @@
       } else {
         const sampled = sampleVideoColorAt(aim.aimX, aim.aimY);
         if (sampled) {
-          videoTracker.setTargetColor(sampled.r, sampled.g, sampled.b, 80);
-          document.getElementById("colorSwatch").style.background = `rgb(${sampled.r}, ${sampled.g}, ${sampled.b})`;
-          document.getElementById("colorRgbText").textContent = `(${sampled.r}, ${sampled.g}, ${sampled.b})`;
-          document.getElementById("previewHint").textContent = `已鎖定目標色 (${sampled.r},${sampled.g},${sampled.b})`;
+          if (trackingMode === "dual" && activePickTarget === "B") {
+            targetColorB = sampled;
+            videoTracker.setTargetColorB(sampled.r, sampled.g, sampled.b, 80);
+            document.getElementById("colorSwatchB").style.background = `rgb(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+            document.getElementById("colorRgbTextB").textContent = `(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+            document.getElementById("previewHint").textContent = `已鎖定點 B 色 (${sampled.r},${sampled.g},${sampled.b})`;
+          } else {
+            targetColorA = sampled;
+            videoTracker.setTargetColor(sampled.r, sampled.g, sampled.b, 80);
+            document.getElementById("colorSwatch").style.background = `rgb(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+            document.getElementById("colorRgbText").textContent = `(${sampled.r}, ${sampled.g}, ${sampled.b})`;
+            const tag = trackingMode === "dual" ? "點 A " : "目標";
+            document.getElementById("previewHint").textContent = `已鎖定${tag}色 (${sampled.r},${sampled.g},${sampled.b})`;
+          }
         }
         drawPreviewFrame();
       }
@@ -1039,6 +1134,8 @@
 
         videoTracker.setFPS(fps);
         videoTracker.setScale(scalePx, realLen);
+        videoTracker.setTargetColor(targetColorA.r, targetColorA.g, targetColorA.b, 80);
+        videoTracker.setTargetColorB(targetColorB.r, targetColorB.g, targetColorB.b, 80);
         physicsEngine.setScale(scalePx, realLen);
         physicsEngine.setHorizonAngle(horizonAngleRad);
 
@@ -1051,9 +1148,12 @@
         progressBox.style.display = "block";
         resultBox.style.display = "none";
 
-        const rawPoints = await videoTracker.analyzeVideo(mobileVideo, {
+        const isDual = trackingMode === "dual";
+        const analyzeOut = await videoTracker.analyzeVideo(mobileVideo, {
           startTime,
           endTime,
+          dual: isDual,
+          colorB: targetColorB,
           onProgress: (p) => {
             progressBar.style.width = `${p.percent}%`;
             progressText.textContent = `逐幀提取中... ${p.percent}%`;
@@ -1061,14 +1161,33 @@
           }
         });
 
-        if (!rawPoints || rawPoints.length === 0) {
-          alert("⚠️ 未能在影片中追蹤到目標色彩！\n請先在預覽畫面中點擊紅球進行「取色」，再點擊開始分析。");
+        const rawPointsA = isDual ? analyzeOut.primary : analyzeOut;
+        const rawPointsB = isDual ? analyzeOut.secondary : [];
+
+        if (!rawPointsA || rawPointsA.length === 0 || (isDual && (!rawPointsB || rawPointsB.length === 0))) {
+          alert(isDual
+            ? "⚠️ 雙點模式未能同時追蹤到 A 與 B 的目標色彩！\n請確認兩者分別取色完成且顏色有區別。"
+            : "⚠️ 未能在影片中追蹤到目標色彩！\n請先在預覽畫面中長按拖曳進行「取色」，再點擊開始分析。");
           progressBox.style.display = "none";
           return;
         }
 
-        // 執行 Savitzky-Golay 平滑化與物理微分求導 (v, a)
-        processedTrajectory = physicsEngine.processTrajectory(rawPoints);
+        // 雙點比較時共用點 A 起點為物理座標原點，方便直接比較相對位置與碰撞交會
+        if (isDual) {
+          const sharedOrigin = { x: rawPointsA[0].x, y: rawPointsA[0].y };
+          physicsEngine.origin = sharedOrigin;
+          const physicsEngineB = new PhysicsEngine({
+            pixelToMeter: physicsEngine.pixelToMeter,
+            horizonAngle: horizonAngleRad,
+            origin: sharedOrigin
+          });
+          processedTrajectory = physicsEngine.processTrajectory(rawPointsA);
+          processedTrajectoryB = physicsEngineB.processTrajectory(rawPointsB);
+        } else {
+          physicsEngine.origin = null;
+          processedTrajectory = physicsEngine.processTrajectory(rawPointsA);
+          processedTrajectoryB = [];
+        }
 
         progressBox.style.display = "none";
         resultBox.style.display = "block";
@@ -1077,8 +1196,14 @@
           ? Math.max(...processedTrajectory.map(p => p.v || 0)).toFixed(2)
           : "0.00";
 
-        document.getElementById("resultSummaryText").textContent =
-          `共解析 ${processedTrajectory.length} 影格點，最大速度 ${maxV} m/s。已由 Savitzky-Golay 濾波完成微積分平滑！`;
+        if (isDual) {
+          const maxVB = Math.max(...processedTrajectoryB.map(p => p.v || 0)).toFixed(2);
+          document.getElementById("resultSummaryText").textContent =
+            `雙點比較解析完成！點 A ${processedTrajectory.length} 幀 (vmax ${maxV} m/s) ｜ 點 B ${processedTrajectoryB.length} 幀 (vmax ${maxVB} m/s)。`;
+        } else {
+          document.getElementById("resultSummaryText").textContent =
+            `共解析 ${processedTrajectory.length} 影格點，最大速度 ${maxV} m/s。已由 Savitzky-Golay 濾波完成微積分平滑！`;
+        }
 
         // 分析完成後自動啟動同步至大屏 (包含物理數據與影片檔)
         await pushAllToScreen({ autoSwitchTab: false });
@@ -1103,7 +1228,10 @@
         const selectedFps = Number(document.getElementById("selectFps").value) || 60;
         mobileVideo.currentTime = clipStart;
 
-        await syncManager.sendPhysicsData(processedTrajectory);
+        const physicsPayload = (processedTrajectoryB && processedTrajectoryB.length > 0)
+          ? { mode: "dual", primary: processedTrajectory, secondary: processedTrajectoryB }
+          : processedTrajectory;
+        await syncManager.sendPhysicsData(physicsPayload);
         await syncManager.updateStatus({
           state: "analyzed",
           videoType: currentVideoType,

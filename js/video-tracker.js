@@ -7,7 +7,8 @@
 export class VideoTracker {
   constructor(options = {}) {
     this.fps = options.fps || 120; // 預設 120 FPS
-    this.targetColor = options.targetColor || { r: 255, g: 80, b: 0 }; // 追蹤目標顏色 (RGB)
+    this.targetColor = options.targetColor || { r: 255, g: 80, b: 0 }; // 追蹤目標 A 顏色 (RGB)
+    this.targetColorB = options.targetColorB || { r: 56, g: 189, b: 248 }; // 追蹤目標 B 顏色 (RGB)
     this.colorTolerance = options.colorTolerance || 60; // 容許色差
     this.roi = options.roi || null; // 感興趣區域 {x, y, width, height}
     this.scalePoints = []; // 尺標標定兩點 [{x, y}, {x, y}]
@@ -39,10 +40,18 @@ export class VideoTracker {
   }
 
   /**
-   * 設定目標追蹤顏色
+   * 設定目標追蹤顏色 (A)
    */
   setTargetColor(r, g, b, tolerance = 60) {
     this.targetColor = { r, g, b };
+    this.colorTolerance = tolerance;
+  }
+
+  /**
+   * 設定第二目標追蹤顏色 (B，雙點比較模式用)
+   */
+  setTargetColorB(r, g, b, tolerance = 60) {
+    this.targetColorB = { r, g, b };
     this.colorTolerance = tolerance;
   }
 
@@ -97,7 +106,7 @@ export class VideoTracker {
   /**
    * 於指定影格影像內進行質心辨識 (Weighted Centroid)
    */
-  findCentroid(imageData, roi) {
+  findCentroid(imageData, roi, targetColor = this.targetColor) {
     const data = imageData.data;
     const width = imageData.width;
     const height = imageData.height;
@@ -111,9 +120,9 @@ export class VideoTracker {
     let sumX = 0;
     let sumY = 0;
 
-    const tr = this.targetColor.r;
-    const tg = this.targetColor.g;
-    const tb = this.targetColor.b;
+    const tr = targetColor.r;
+    const tg = targetColor.g;
+    const tb = targetColor.b;
     // 適度放寬容許值確保運動模糊或微小光影變化依然能穩定咬住目標
     const tol = Math.max(75, this.colorTolerance);
 
@@ -177,12 +186,72 @@ export class VideoTracker {
 
     const dt = 1 / this.fps;
     const totalFrames = Math.max(1, Math.floor((endTime - startTime) / dt));
-    const trajectory = [];
+    const isDual = !!options.dual;
+    const targetStates = [
+      {
+        color: this.targetColor,
+        trajectory: [],
+        lastKnownPos: null,
+        lastVelocity: { vx: 0, vy: 0 },
+        lastCapturedTime: null
+      }
+    ];
+    if (isDual) {
+      targetStates.push({
+        color: options.colorB || this.targetColorB,
+        trajectory: [],
+        lastKnownPos: null,
+        lastVelocity: { vx: 0, vy: 0 },
+        lastCapturedTime: null
+      });
+    }
 
-    let lastKnownPos = null;
-    let lastVelocity = { vx: 0, vy: 0 };
-    let lastCapturedTime = null;
     let prevFrameSig = null;
+
+    // 共用單目標追蹤更新邏輯 (單點 / 雙點模式統一使用)
+    const stepTargetInFrame = (imgData, state, currentTime) => {
+      let point = null;
+      const actualDt = state.lastCapturedTime !== null ? Math.max(0.001, currentTime - state.lastCapturedTime) : dt;
+      if (this.roi) {
+        point = this.findCentroid(imgData, this.roi, state.color);
+      } else if (state.lastKnownPos) {
+        const searchRadius = isDual ? 115 : 140;
+        const predX = state.lastKnownPos.x + state.lastVelocity.vx * actualDt;
+        const predY = state.lastKnownPos.y + state.lastVelocity.vy * actualDt;
+        const localROI = {
+          x: predX - searchRadius,
+          y: predY - searchRadius,
+          width: searchRadius * 2,
+          height: searchRadius * 2
+        };
+        point = this.findCentroid(imgData, localROI, state.color);
+      }
+
+      if (!point) {
+        point = this.findCentroid(imgData, null, state.color);
+      }
+
+      if (point) {
+        if (state.lastKnownPos && state.lastCapturedTime !== null) {
+          state.lastVelocity = {
+            vx: (point.x - state.lastKnownPos.x) / actualDt,
+            vy: (point.y - state.lastKnownPos.y) / actualDt
+          };
+        }
+        state.lastKnownPos = { x: point.x, y: point.y };
+        state.lastCapturedTime = currentTime;
+        state.trajectory.push({ t: currentTime, x: point.x, y: point.y, found: true });
+      } else if (state.lastKnownPos) {
+        state.lastCapturedTime = currentTime;
+        state.trajectory.push({
+          t: currentTime,
+          x: state.lastKnownPos.x,
+          y: state.lastKnownPos.y,
+          found: false
+        });
+      }
+      return point || state.lastKnownPos;
+    };
 
     // 擷取影格像素特徵，用於自動濾除因影片原生幀率低於設定 FPS 而產生的「重複影格」
     const sampleFrameSignature = (imgData) => {
@@ -230,60 +299,16 @@ export class VideoTracker {
             currentFrame: frameIdx + 1,
             totalFrames,
             currentTime,
-            latestPoint: lastKnownPos
+            latestPoint: targetStates[0].lastKnownPos
           });
           continue;
         }
         prevFrameSig = currSig;
 
-        // 1. 若有上一影格座標，使用速度預測中心建立局部搜尋窗口 (ROI)
-        let point = null;
-        const actualDt = lastCapturedTime !== null ? Math.max(0.001, currentTime - lastCapturedTime) : dt;
-        if (this.roi) {
-          point = this.findCentroid(imgData, this.roi);
-        } else if (lastKnownPos) {
-          const searchRadius = 140; // 放寬搜尋半徑，適應彈跳大速度
-          const predX = lastKnownPos.x + lastVelocity.vx * actualDt;
-          const predY = lastKnownPos.y + lastVelocity.vy * actualDt;
-          const localROI = {
-            x: predX - searchRadius,
-            y: predY - searchRadius,
-            width: searchRadius * 2,
-            height: searchRadius * 2
-          };
-          point = this.findCentroid(imgData, localROI);
-        }
-
-        // 2. 關鍵保證：若局部未找到，立即切換為全畫面全域搜尋 (Global Fallback)
-        // 徹底解決因彈跳或高速運動導致超出局部窗口而永久丟失標記的問題！
-        if (!point) {
-          point = this.findCentroid(imgData, null);
-        }
-
-        if (point) {
-          if (lastKnownPos && lastCapturedTime !== null) {
-            lastVelocity = {
-              vx: (point.x - lastKnownPos.x) / actualDt,
-              vy: (point.y - lastKnownPos.y) / actualDt
-            };
-          }
-          lastKnownPos = { x: point.x, y: point.y };
-          lastCapturedTime = currentTime;
-          trajectory.push({
-            t: currentTime,
-            x: point.x,
-            y: point.y,
-            found: true
-          });
-        } else if (lastKnownPos) {
-          lastCapturedTime = currentTime;
-          // 若畫面短暫丟失，使用上一位置保持連貫
-          trajectory.push({
-            t: currentTime,
-            x: lastKnownPos.x,
-            y: lastKnownPos.y,
-            found: false
-          });
+        let latestPt = null;
+        for (const state of targetStates) {
+          const pt = stepTargetInFrame(imgData, state, currentTime);
+          if (!latestPt) latestPt = pt;
         }
 
         const percent = Math.min(100, Math.round(((frameIdx + 1) / totalFrames) * 100));
@@ -292,14 +317,16 @@ export class VideoTracker {
           currentFrame: frameIdx + 1,
           totalFrames,
           currentTime,
-          latestPoint: point || lastKnownPos
+          latestPoint: latestPt
         });
       }
     } finally {
       this.isAnalyzing = false;
     }
 
-    return trajectory;
+    return isDual
+      ? { primary: targetStates[0].trajectory, secondary: targetStates[1].trajectory }
+      : targetStates[0].trajectory;
   }
 
   cancel() {

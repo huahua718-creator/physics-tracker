@@ -13,6 +13,7 @@ export class PhysicsChart {
     this.axisFilter = options.axisFilter || "all"; // "all" | "x" | "y"
     this.drawMode = options.drawMode || "dynamic"; // "dynamic" (隨播放繪製) | "full" (全曲線+掃描光點)
     this.trajectory = [];
+    this.secondaryTrajectory = [];
     this.duration = 2.5;
 
     // 縮放與聚焦控制
@@ -25,6 +26,7 @@ export class PhysicsChart {
     this.onPointSelect = options.onPointSelect || null;
     this.fitResult = null;
     this.selectedIndex = null;
+    this.selectedTarget = "A";
     this.lastCurrentTime = 0;
 
     // 配色定義 (與大屏 HUD 與向量箭頭一致)
@@ -156,12 +158,14 @@ export class PhysicsChart {
     this.fitResult = fitResult || null;
   }
 
-  setSelectedIndex(index) {
+  setSelectedIndex(index, target = "A") {
     this.selectedIndex = (index !== null && index !== undefined && index >= 0) ? index : null;
+    this.selectedTarget = target === "B" ? "B" : "A";
   }
 
-  setData(trajectory, duration = null) {
+  setData(trajectory, duration = null, secondaryTrajectory = null) {
     this.trajectory = trajectory || [];
+    this.secondaryTrajectory = secondaryTrajectory || [];
     if (duration && isFinite(duration)) {
       this.duration = duration;
     } else if (this.trajectory.length > 0) {
@@ -243,18 +247,18 @@ export class PhysicsChart {
   /**
    * 取得指定時間點的插值數據
    */
-  interpolate(t) {
-    if (!this.trajectory || this.trajectory.length === 0) return null;
-    if (t <= this.trajectory[0].t) return this.trajectory[0];
-    if (t >= this.trajectory[this.trajectory.length - 1].t) {
-      return this.trajectory[this.trajectory.length - 1];
+  interpolate(t, traj = this.trajectory) {
+    if (!traj || traj.length === 0) return null;
+    if (t <= traj[0].t) return traj[0];
+    if (t >= traj[traj.length - 1].t) {
+      return traj[traj.length - 1];
     }
 
     let low = 0;
-    let high = this.trajectory.length - 1;
+    let high = traj.length - 1;
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
-      if (this.trajectory[mid].t < t) {
+      if (traj[mid].t < t) {
         low = mid + 1;
       } else {
         high = mid - 1;
@@ -262,11 +266,11 @@ export class PhysicsChart {
     }
 
     const i0 = Math.max(0, low - 1);
-    const i1 = Math.min(this.trajectory.length - 1, low);
-    if (i0 === i1) return this.trajectory[i0];
+    const i1 = Math.min(traj.length - 1, low);
+    if (i0 === i1) return traj[i0];
 
-    const p0 = this.trajectory[i0];
-    const p1 = this.trajectory[i1];
+    const p0 = traj[i0];
+    const p1 = traj[i1];
     const dt = p1.t - p0.t;
     const ratio = dt > 0 ? (t - p0.t) / dt : 0;
 
@@ -356,43 +360,53 @@ export class PhysicsChart {
   }
 
   getSeriesConfig() {
+    const hasB = this.secondaryTrajectory && this.secondaryTrajectory.length >= 2;
+    const prefixA = hasB ? "A." : "";
+
     if (this.type === "xt") {
       const lines = [];
       if (this.axisFilter === "all" || this.axisFilter === "x") {
-        lines.push({ key: "meterX", name: "X位移 (x)", color: this.colors.x });
+        lines.push({ source: "primary", key: "meterX", name: `${prefixA}x`, color: this.colors.x });
+        if (hasB) lines.push({ source: "secondary", key: "meterX", name: "B.x", color: "#c084fc", dash: [6, 4] });
       }
       if (this.axisFilter === "all" || this.axisFilter === "y") {
-        lines.push({ key: "meterY", name: "Y位移 (y)", color: this.colors.y });
+        lines.push({ source: "primary", key: "meterY", name: `${prefixA}y`, color: this.colors.y });
+        if (hasB) lines.push({ source: "secondary", key: "meterY", name: "B.y", color: "#fb7185", dash: [6, 4] });
       }
-      return { title: "位移 x-t / y-t", unit: "m", lines };
+      return { title: hasB ? "雙點位移 x-t / y-t" : "位移 x-t / y-t", unit: "m", lines };
     } else if (this.type === "vt") {
       const lines = [];
       if (this.axisFilter === "all" || this.axisFilter === "x") {
-        lines.push({ key: "vx", name: "vx", color: this.colors.x });
+        lines.push({ source: "primary", key: "vx", name: `${prefixA}vx`, color: this.colors.x });
+        if (hasB) lines.push({ source: "secondary", key: "vx", name: "B.vx", color: "#c084fc", dash: [6, 4] });
       }
       if (this.axisFilter === "all" || this.axisFilter === "y") {
-        lines.push({ key: "vy", name: "vy", color: this.colors.y });
+        lines.push({ source: "primary", key: "vy", name: `${prefixA}vy`, color: this.colors.y });
+        if (hasB) lines.push({ source: "secondary", key: "vy", name: "B.vy", color: "#fb7185", dash: [6, 4] });
       }
-      if (this.axisFilter === "all") {
-        lines.push({ key: "v", name: "|v|", color: this.colors.mag, dash: [4, 4] });
+      if (this.axisFilter === "all" && !hasB) {
+        lines.push({ source: "primary", key: "v", name: "|v|", color: this.colors.mag, dash: [4, 4] });
       }
-      return { title: "速度 v-t", unit: "m/s", lines };
+      return { title: hasB ? "雙點速度 v-t" : "速度 v-t", unit: "m/s", lines };
     } else {
       const lines = [];
       if (this.axisFilter === "all" || this.axisFilter === "x") {
-        lines.push({ key: "ax", name: "ax", color: this.colors.x });
+        lines.push({ source: "primary", key: "ax", name: `${prefixA}ax`, color: this.colors.x });
+        if (hasB) lines.push({ source: "secondary", key: "ax", name: "B.ax", color: "#c084fc", dash: [6, 4] });
       }
       if (this.axisFilter === "all" || this.axisFilter === "y") {
-        lines.push({ key: "ay", name: "ay", color: this.colors.accY });
+        lines.push({ source: "primary", key: "ay", name: `${prefixA}ay`, color: this.colors.accY });
+        if (hasB) lines.push({ source: "secondary", key: "ay", name: "B.ay", color: "#fb923c", dash: [6, 4] });
       }
-      return { title: "加速度 a-t", unit: "m/s²", lines };
+      return { title: hasB ? "雙點加速度 a-t" : "加速度 a-t", unit: "m/s²", lines };
     }
   }
 
   calculateYRange(config) {
     const allVals = [];
-    for (const pt of this.trajectory) {
-      for (const line of config.lines) {
+    for (const line of config.lines) {
+      const traj = line.source === "secondary" ? this.secondaryTrajectory : this.trajectory;
+      for (const pt of traj) {
         const val = pt[line.key];
         if (val !== undefined && !isNaN(val) && isFinite(val)) {
           allVals.push(val);
@@ -503,8 +517,8 @@ export class PhysicsChart {
   }
 
   drawSeriesLine(ctx, line, mapX, mapY, currentTime, dpr) {
-    const pts = this.trajectory;
-    if (pts.length < 2) return;
+    const pts = line.source === "secondary" ? this.secondaryTrajectory : this.trajectory;
+    if (!pts || pts.length < 2) return;
 
     ctx.save();
     ctx.lineWidth = 2.5 * dpr;
@@ -550,7 +564,7 @@ export class PhysicsChart {
             ctx.lineTo(x, y);
           }
         } else {
-          const interp = this.interpolate(currentTime);
+          const interp = this.interpolate(currentTime, pts);
           if (interp && interp[line.key] !== undefined) {
             ctx.lineTo(mapX(currentTime), mapY(interp[line.key]));
           }
@@ -577,27 +591,27 @@ export class PhysicsChart {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const interp = this.interpolate(currentTime);
-    if (interp) {
-      seriesConfig.lines.forEach(line => {
-        const val = interp[line.key];
-        if (val !== undefined) {
-          const curY = mapY(val);
+    const interpA = this.interpolate(currentTime, this.trajectory);
+    const interpB = this.interpolate(currentTime, this.secondaryTrajectory);
+    seriesConfig.lines.forEach(line => {
+      const interp = line.source === "secondary" ? interpB : interpA;
+      const val = interp ? interp[line.key] : undefined;
+      if (val !== undefined) {
+        const curY = mapY(val);
 
-          ctx.beginPath();
-          ctx.fillStyle = line.color;
-          ctx.globalAlpha = 0.35;
-          ctx.arc(curX, curY, 8 * dpr, 0, Math.PI * 2);
-          ctx.fill();
+        ctx.beginPath();
+        ctx.fillStyle = line.color;
+        ctx.globalAlpha = 0.35;
+        ctx.arc(curX, curY, 8 * dpr, 0, Math.PI * 2);
+        ctx.fill();
 
-          ctx.globalAlpha = 1.0;
-          ctx.fillStyle = "#ffffff";
-          ctx.beginPath();
-          ctx.arc(curX, curY, 3.5 * dpr, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      });
-    }
+        ctx.globalAlpha = 1.0;
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(curX, curY, 3.5 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
 
     ctx.restore();
   }
@@ -622,12 +636,17 @@ export class PhysicsChart {
   }
 
   drawSelectedPointMarker(ctx, pad, mapX, mapY, seriesConfig, dpr) {
-    if (this.selectedIndex === null || !this.trajectory[this.selectedIndex]) return;
-    const pt = this.trajectory[this.selectedIndex];
+    const selTraj = this.selectedTarget === "B" && this.secondaryTrajectory.length > 0
+      ? this.secondaryTrajectory
+      : this.trajectory;
+    if (this.selectedIndex === null || !selTraj[this.selectedIndex]) return;
+    const pt = selTraj[this.selectedIndex];
     const sx = mapX(pt.t);
+    const activeSource = this.selectedTarget === "B" ? "secondary" : "primary";
 
     ctx.save();
     seriesConfig.lines.forEach(line => {
+      if (line.source !== activeSource) return;
       const val = pt[line.key];
       if (val === undefined) return;
       const sy = mapY(val);
@@ -658,23 +677,28 @@ export class PhysicsChart {
     ctx.fillStyle = this.colors.textHighlight;
     ctx.fillText(config.title, pad.left, pad.top - 16 * dpr);
 
-    const interp = this.interpolate(currentTime);
+    const interpA = this.interpolate(currentTime, this.trajectory);
+    const interpB = this.interpolate(currentTime, this.secondaryTrajectory);
 
-    let offsetX = pad.left + 108 * dpr;
-    ctx.font = `${11 * dpr}px monospace`;
+    let offsetX = pad.left + ctx.measureText(config.title).width + 14 * dpr;
+    ctx.font = `${10.5 * dpr}px monospace`;
+    const maxW = this.canvas.width - pad.right;
 
     config.lines.forEach(line => {
-      ctx.fillStyle = line.color;
-      ctx.fillRect(offsetX, pad.top - 20 * dpr, 9 * dpr, 8 * dpr);
-
+      const interp = line.source === "secondary" ? interpB : interpA;
       let label = line.name;
       if (interp && interp[line.key] !== undefined) {
-        label += `: ${interp[line.key].toFixed(2)} ${config.unit}`;
+        label += `:${interp[line.key].toFixed(2)}`;
       }
+      const needed = 12 * dpr + ctx.measureText(label).width + 12 * dpr;
+      if (offsetX + needed > maxW) return;
+
+      ctx.fillStyle = line.color;
+      ctx.fillRect(offsetX, pad.top - 20 * dpr, 8 * dpr, 8 * dpr);
 
       ctx.fillStyle = this.colors.text;
-      ctx.fillText(label, offsetX + 12 * dpr, pad.top - 16 * dpr);
-      offsetX += ctx.measureText(label).width + 20 * dpr;
+      ctx.fillText(label, offsetX + 11 * dpr, pad.top - 16 * dpr);
+      offsetX += needed;
     });
 
     ctx.restore();

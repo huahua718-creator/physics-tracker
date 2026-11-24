@@ -22,12 +22,14 @@ export class VectorDrawer {
     this.strobeStep = options.strobeStep || 3; // 每隔幾幀保留一顆殘影
     this.ghostMaxCount = options.ghostMaxCount || 40; // 最大殘影數量
 
-    // 使用者點選的特定影像點索引
+    // 使用者點選的特定影像點索引與所屬目標 ("A" | "B")
     this.selectedIndex = null;
+    this.selectedTarget = "A";
   }
 
-  setSelectedIndex(index) {
+  setSelectedIndex(index, target = "A") {
     this.selectedIndex = (index !== null && index !== undefined && index >= 0) ? index : null;
+    this.selectedTarget = target === "B" ? "B" : "A";
   }
 
   /**
@@ -70,10 +72,12 @@ export class VectorDrawer {
   }
 
   /**
-   * 依據螢幕點擊座標 (clientX, clientY) 尋找距離最近的影片軌跡點
+   * 依據螢幕點擊座標 (clientX, clientY) 尋找距離最近的影片軌跡點 (支援單點或雙點 A/B)
    */
-  findNearestPoint(video, trajectory, clientX, clientY, maxDistPx = 38) {
-    if (!video || !trajectory || trajectory.length === 0) return null;
+  findNearestPoint(video, trajectory, clientX, clientY, maxDistPx = 38, secondaryTrajectory = null) {
+    if (!video || ((!trajectory || trajectory.length === 0) && (!secondaryTrajectory || secondaryTrajectory.length === 0))) {
+      return null;
+    }
     this.syncSizeWithVideo(video);
 
     const rect = this.canvas.getBoundingClientRect();
@@ -81,67 +85,118 @@ export class VectorDrawer {
     const clickY = clientY - rect.top;
     const params = this.getVideoRenderParams(video);
 
+    let bestTarget = "A";
     let bestIndex = -1;
+    let bestPoint = null;
     let bestDist = Infinity;
 
-    for (let i = 0; i < trajectory.length; i++) {
-      const coords = this.toCanvasCoords(trajectory[i].x, trajectory[i].y, params);
-      const dist = Math.hypot(coords.x - clickX, coords.y - clickY);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIndex = i;
+    const searchSeries = (traj, label) => {
+      if (!traj) return;
+      for (let i = 0; i < traj.length; i++) {
+        const coords = this.toCanvasCoords(traj[i].x, traj[i].y, params);
+        const dist = Math.hypot(coords.x - clickX, coords.y - clickY);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIndex = i;
+          bestTarget = label;
+          bestPoint = traj[i];
+        }
       }
-    }
+    };
+
+    searchSeries(trajectory, "A");
+    searchSeries(secondaryTrajectory, "B");
 
     if (bestIndex >= 0 && bestDist <= maxDistPx) {
-      return { index: bestIndex, point: trajectory[bestIndex], dist: bestDist };
+      return { target: bestTarget, index: bestIndex, point: bestPoint, dist: bestDist };
     }
     return null;
   }
 
   /**
-   * 核心渲染函式
-   * @param {HTMLVideoElement} video 底層影片元素
-   * @param {Array} trajectory 全部物理軌跡陣列
-   * @param {Object} currentPoint 當前時間內插之物理點
+   * 核心渲染函式 (支援雙點比較模式：可選傳入 targetCtx 供離屏匯出影片直接繪製)
    */
-  render(video, trajectory, currentPoint) {
-    this.syncSizeWithVideo(video);
-    const ctx = this.ctx;
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+  render(video, trajectory, currentPoint, secondaryTrajectory = null, secondaryCurrentPoint = null, targetCtx = null, customParams = null) {
+    if (!targetCtx) {
+      this.syncSizeWithVideo(video);
+    }
+    const ctx = targetCtx || this.ctx;
+    const canvasW = ctx.canvas.width;
+    const canvasH = ctx.canvas.height;
+    if (!targetCtx) {
+      ctx.clearRect(0, 0, canvasW, canvasH);
+    }
 
-    if (!video || !trajectory || trajectory.length === 0 || !currentPoint) return;
+    const hasA = !!(trajectory && trajectory.length > 0 && currentPoint);
+    const hasB = !!(secondaryTrajectory && secondaryTrajectory.length > 0 && secondaryCurrentPoint);
+    if (!video || (!hasA && !hasB)) return;
 
-    const params = this.getVideoRenderParams(video);
+    const params = customParams || this.getVideoRenderParams(video);
+    const isDual = hasA && hasB;
 
     // 1. 繪製殘影軌跡 (Strobe Effect)
     if (this.showGhost) {
-      this.renderGhostStrobe(trajectory, currentPoint, params);
+      if (hasA) {
+        this.renderGhostStrobe(ctx, trajectory, currentPoint, params, {
+          fillRgb: "56, 189, 248",
+          lineRgba: "rgba(56, 189, 248, 0.4)"
+        });
+      }
+      if (hasB) {
+        this.renderGhostStrobe(ctx, secondaryTrajectory, secondaryCurrentPoint, params, {
+          fillRgb: "251, 113, 133",
+          lineRgba: "rgba(251, 113, 133, 0.45)"
+        });
+      }
     }
 
-    // 當前質心投影座標
-    const center = this.toCanvasCoords(currentPoint.x, currentPoint.y, params);
+    // 2. 若同時存在雙點，繪製 A-B 間距虛線輔助比較
+    if (isDual) {
+      const cA = this.toCanvasCoords(currentPoint.x, currentPoint.y, params);
+      const cB = this.toCanvasCoords(secondaryCurrentPoint.x, secondaryCurrentPoint.y, params);
+      ctx.save();
+      ctx.strokeStyle = "rgba(250, 204, 21, 0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(cA.x, cA.y);
+      ctx.lineTo(cB.x, cB.y);
+      ctx.stroke();
+      ctx.restore();
+    }
 
-    // 2. 繪製當前質心定位標記 (十字瞄準圈)
-    ctx.save();
-    ctx.strokeStyle = "#ffffff";
-    ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    const drawCrosshair = (pt, ringColor, tagLabel) => {
+      const center = this.toCanvasCoords(pt.x, pt.y, params);
+      ctx.save();
+      ctx.strokeStyle = ringColor;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
 
-    // 瞄準外圈
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, 16, 0, Math.PI * 2);
-    ctx.setLineDash([4, 4]);
-    ctx.stroke();
-    ctx.restore();
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, 16, 0, Math.PI * 2);
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+
+      if (tagLabel) {
+        ctx.setLineDash([]);
+        ctx.font = "bold 12px -apple-system, sans-serif";
+        ctx.fillStyle = ringColor;
+        ctx.fillText(tagLabel, center.x + 18, center.y - 12);
+      }
+      ctx.restore();
+    };
+
+    if (hasA) drawCrosshair(currentPoint, isDual ? "#38bdf8" : "#ffffff", isDual ? "A" : "");
+    if (hasB) drawCrosshair(secondaryCurrentPoint, "#fb7185", "B");
 
     // 3. 若有選中的影像點，繪製醒目的金色選取標記與座標氣泡
-    if (this.selectedIndex !== null && trajectory[this.selectedIndex]) {
-      const selPt = trajectory[this.selectedIndex];
+    const activeTraj = this.selectedTarget === "B" && hasB ? secondaryTrajectory : trajectory;
+    if (this.selectedIndex !== null && activeTraj && activeTraj[this.selectedIndex]) {
+      const selPt = activeTraj[this.selectedIndex];
       const selCoords = this.toCanvasCoords(selPt.x, selPt.y, params);
 
       ctx.save();
@@ -156,10 +211,11 @@ export class VectorDrawer {
       ctx.arc(selCoords.x, selCoords.y, 11, 0, Math.PI * 2);
       ctx.stroke();
 
-      const label = `#${this.selectedIndex} (${selPt.t.toFixed(2)}s, y:${selPt.meterY.toFixed(2)}m)`;
+      const tagPrefix = isDual ? `${this.selectedTarget}#` : "#";
+      const label = `${tagPrefix}${this.selectedIndex} (${selPt.t.toFixed(2)}s, y:${selPt.meterY.toFixed(2)}m)`;
       ctx.font = "bold 12px -apple-system, sans-serif";
       const metrics = ctx.measureText(label);
-      const boxX = Math.min(this.canvas.width - metrics.width - 16, selCoords.x + 16);
+      const boxX = Math.min(canvasW - metrics.width - 16, selCoords.x + 16);
       const boxY = Math.max(24, selCoords.y - 12);
 
       ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
@@ -180,15 +236,14 @@ export class VectorDrawer {
   /**
    * 繪製運動殘影頻閃效果 (Strobe Effect)
    */
-  renderGhostStrobe(trajectory, currentPoint, params) {
-    const ctx = this.ctx;
+  renderGhostStrobe(ctx, trajectory, currentPoint, params, style = {}) {
+    const fillRgb = style.fillRgb || "56, 189, 248";
+    const lineRgba = style.lineRgba || "rgba(56, 189, 248, 0.4)";
     ctx.save();
 
-    // 篩選出當前時間之前的軌跡點
     const pastPoints = trajectory.filter(p => p.t <= currentPoint.t);
     const totalPast = pastPoints.length;
 
-    // 完整軌跡淡色預覽點 (方便滑鼠隨時點擊影片上的任意殘影點)
     for (let i = 0; i < trajectory.length; i += this.strobeStep) {
       const pt = trajectory[i];
       if (pt.t > currentPoint.t) {
@@ -200,10 +255,9 @@ export class VectorDrawer {
       }
     }
 
-    // 連續軌跡平滑細線
     if (totalPast > 1) {
       ctx.beginPath();
-      ctx.strokeStyle = "rgba(56, 189, 248, 0.4)";
+      ctx.strokeStyle = lineRgba;
       ctx.lineWidth = 2;
       ctx.setLineDash([3, 3]);
 
@@ -213,9 +267,9 @@ export class VectorDrawer {
         else ctx.lineTo(pt.x, pt.y);
       }
       ctx.stroke();
+      ctx.setLineDash([]);
     }
 
-    // 殘影光點 (每隔 strobeStep 抽樣)
     const sampled = [];
     for (let i = 0; i < totalPast; i += this.strobeStep) {
       sampled.push(pastPoints[i]);
@@ -225,12 +279,10 @@ export class VectorDrawer {
     for (let i = 0; i < n; i++) {
       const pt = sampled[i];
       const coords = this.toCanvasCoords(pt.x, pt.y, params);
-
-      // 透明度漸變 (越接近當前時間越清晰)
       const alpha = Math.max(0.25, (i + 1) / n);
       const radius = 5 + (alpha * 3);
 
-      ctx.fillStyle = `rgba(56, 189, 248, ${alpha * 0.8})`;
+      ctx.fillStyle = `rgba(${fillRgb}, ${alpha * 0.8})`;
       ctx.beginPath();
       ctx.arc(coords.x, coords.y, radius, 0, Math.PI * 2);
       ctx.fill();

@@ -39,6 +39,9 @@
       <button class="btn-icon" id="btnTopExportExcel" title="匯出物理數據成 Excel (.xlsx)">
         📥 匯出Excel
       </button>
+      <button class="btn-icon" id="btnProjectModal" title="儲存專案 (.json) / 載入專案 / 匯出分析影片">
+        💾 專案/影片
+      </button>
       <button class="btn-icon" id="btnToggleChart" title="顯示/隱藏浮動物理圖表">
         📈 圖表窗
       </button>
@@ -96,12 +99,15 @@
           📶 若網路直連不穩或配對逾時，建議將手機與電腦連到<b>同一個 Wi-Fi</b>（或使用手機熱點）
         </div>
 
-        <div style="display: flex; gap: 10px; margin-top: 8px;">
+        <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 8px;">
           <button class="btn-icon" id="btnOpenMobileTab" style="background: rgba(56, 189, 248, 0.2); border-color: #38bdf8;">
             📱 本機開啟手機控制器
           </button>
           <button class="btn-icon" id="btnLoadDemoDirectly">
             🧪 載入拋體示範影片
+          </button>
+          <button class="btn-icon" id="btnStandbyLoadProject">
+            📂 載入專案檔
           </button>
         </div>
       </div>
@@ -237,6 +243,10 @@
       <div class="analysis-pane-header">
         <div class="analysis-pane-title">
           <span>📋 運動數據表</span>
+          <select class="chart-select-filter" id="analysisTargetSelect" style="display: none;" title="切換表格與擬合目標">
+            <option value="A">🔵 目標 A</option>
+            <option value="B">🔴 目標 B</option>
+          </select>
           <span class="analysis-count-badge" id="analysisPointCount">0 點</span>
         </div>
         <button class="btn-export" id="btnExportExcel">
@@ -329,6 +339,42 @@
       </div>
     </div>
   </section>
+
+  <!-- 專案管理與影片匯出彈窗 -->
+  <div class="modal-backdrop" id="projectModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>💾 專案儲存與分析影片匯出</span>
+        <button class="btn-icon" id="btnCloseProjectModal" style="padding: 4px 8px;">✕</button>
+      </div>
+      <p style="font-size: 0.84rem; color: #94a3b8; line-height: 1.5; margin-bottom: 12px;">
+        可將目前軌跡、回歸擬合、白板標記與影片（15 MB 以下自動內嵌）打包為可重複開啟的專案檔，或直接渲染匯出帶有頻閃殘影與數值疊加的分析影片。
+      </p>
+
+      <input type="file" id="projectFileInput" accept=".json,.ptproj.json,application/json" style="display: none;">
+      <input type="file" id="attachVideoInput" accept="video/*" style="display: none;">
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <button class="btn-icon" id="btnExportAnalyzedVideo" style="justify-content: center; padding: 10px; background: rgba(16, 185, 129, 0.2); border-color: #10b981; color: #6ee7b7; font-weight: bold;">
+          🎬 匯出標記分析影片 (.webm)
+        </button>
+        <div id="exportVideoStatusText" style="display: none; font-size: 0.8rem; color: #38bdf8; text-align: center; padding: 4px 8px; background: rgba(56,189,248,0.1); border-radius: 6px;"></div>
+
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-icon" id="btnSaveProject" style="flex: 1; justify-content: center; padding: 10px; background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; font-weight: bold;">
+            💾 儲存專案 (.json)
+          </button>
+          <button class="btn-icon" id="btnModalLoadProject" style="flex: 1; justify-content: center; padding: 10px; font-weight: bold;">
+            📂 載入專案 (.json)
+          </button>
+        </div>
+
+        <button class="btn-icon" id="btnAttachVideoToProject" style="justify-content: center; padding: 8px; font-size: 0.82rem; color: #cbd5e1;">
+          🎞️ 關聯本地影片檔（大於 15 MB 的未內嵌專案用）
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Firebase 設定彈窗 -->
   <div class="modal-backdrop" id="settingsModal">
@@ -439,30 +485,76 @@
     });
 
     let currentTrajectory = [];
+    let secondaryTrajectory = [];
     let currentFitResult = null;
     let selectedPointIndex = null;
+    let selectedTarget = "A";
     let hasLoadedVideo = false;
+    let currentVideoBlob = null;
+    let currentVideoName = "physics-video.mp4";
     let isGeneratingDemo = false;
     let isReceivingVideo = false;
     let clipStart = 0;
     let clipEnd = null;
     let activeFps = 60;
 
-    function setTrajectoryData(trajectory) {
-      currentTrajectory = trajectory || [];
+    function getActiveAnalysisTrajectory() {
+      return (selectedTarget === "B" && secondaryTrajectory.length > 0)
+        ? secondaryTrajectory
+        : currentTrajectory;
+    }
+
+    function updateLegendPanel() {
+      const legend = document.getElementById("legendPanel");
+      if (!legend) return;
+      if (secondaryTrajectory && secondaryTrajectory.length > 0) {
+        legend.innerHTML = `
+          <div class="legend-item">
+            <span class="legend-color" style="background: #38bdf8;"></span>
+            <span>點 A 運動殘影 (實線)</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-color" style="background: #fb7185;"></span>
+            <span>點 B 運動殘影 (虛線)</span>
+          </div>
+        `;
+      } else {
+        legend.innerHTML = `
+          <div class="legend-item">
+            <span class="legend-color" style="background: #38bdf8;"></span>
+            <span>運動殘影頻閃 (Cyan Strobe)</span>
+          </div>
+        `;
+      }
+    }
+
+    function setTrajectoryData(trajectory, secondary = []) {
+      currentTrajectory = Array.isArray(trajectory) ? trajectory : [];
+      secondaryTrajectory = Array.isArray(secondary) ? secondary : [];
       currentFitResult = null;
       selectedPointIndex = null;
-      vectorDrawer.setSelectedIndex(null);
+      selectedTarget = "A";
+
+      const targetSel = document.getElementById("analysisTargetSelect");
+      if (targetSel) {
+        targetSel.value = "A";
+        targetSel.style.display = secondaryTrajectory.length > 0 ? "inline-block" : "none";
+      }
+
+      vectorDrawer.setSelectedIndex(null, "A");
       physicsChart.setFitResult(null);
-      physicsChart.setSelectedIndex(null);
+      physicsChart.setSelectedIndex(null, "A");
       analysisChart.setFitResult(null);
-      analysisChart.setSelectedIndex(null);
+      analysisChart.setSelectedIndex(null, "A");
       document.getElementById("fittingResultBanner").classList.remove("active");
       document.getElementById("btnJumpToSelectedVideo").style.display = "none";
       document.getElementById("selectedPointBanner").textContent = "💡 提示：點擊左側表格列、圖表上的點或影像中的軌跡點，即可雙向同步定位！";
 
-      physicsChart.setData(currentTrajectory, video.duration);
-      analysisChart.setData(currentTrajectory, video.duration);
+      const fallbackDur = currentTrajectory.length > 0 ? currentTrajectory[currentTrajectory.length - 1].t : 1;
+      const chartDur = (video.duration && isFinite(video.duration)) ? video.duration : fallbackDur;
+      physicsChart.setData(currentTrajectory, chartDur, secondaryTrajectory);
+      analysisChart.setData(currentTrajectory, chartDur, secondaryTrajectory);
+      updateLegendPanel();
       renderAnalysisTable();
       if (!analysisWorkspace.classList.contains("hidden")) {
         analysisChart.render(video.currentTime);
@@ -546,6 +638,8 @@
         setTimeout(() => { receiveProgressBox.style.display = "none"; }, 400);
 
         console.log(`✅ 已完整接收手機影片 (${evt.name})，準備播放！`);
+        currentVideoBlob = evt.blob || null;
+        currentVideoName = evt.name || "mobile_video.mp4";
         video.src = evt.url;
         video.load();
         hasLoadedVideo = true;
@@ -565,6 +659,8 @@
         standbyStatusText.textContent = "⏳ 正在同步生成示範影片...";
         try {
           const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+          currentVideoBlob = blob;
+          currentVideoName = "demo_projectile.webm";
           video.src = URL.createObjectURL(blob);
           video.load();
           hasLoadedVideo = true;
@@ -628,14 +724,20 @@
       vectorDrawer.showAcceleration = false;
     });
 
-    syncManager.onPhysicsDataChange((trajectory) => {
-      console.log(`收到軌跡物理數據，共 ${trajectory.length} 影格點`);
-      setTrajectoryData(trajectory);
+    syncManager.onPhysicsDataChange((payload) => {
+      const isDual = payload && !Array.isArray(payload) && Array.isArray(payload.primary);
+      const primary = isDual ? payload.primary : (Array.isArray(payload) ? payload : []);
+      const secondary = isDual ? (payload.secondary || []) : [];
+      console.log(`收到軌跡物理數據，點A=${primary.length}，點B=${secondary.length}`);
+      setTrajectoryData(primary, secondary);
 
       if (hasLoadedVideo) {
         standbyOverlay.classList.add("hidden");
       } else if (!isReceivingVideo) {
-        standbyStatusText.textContent = `📊 已收到 ${trajectory.length} 點物理數據，等待影片傳輸就緒...`;
+        const msg = secondary.length > 0
+          ? `📊 已收到雙點物理數據 (A:${primary.length}, B:${secondary.length})，等待影片傳輸就緒...`
+          : `📊 已收到 ${primary.length} 點物理數據，等待影片傳輸就緒...`;
+        standbyStatusText.textContent = msg;
       }
     });
 
@@ -666,11 +768,14 @@
 
       if (currentTrajectory && currentTrajectory.length > 0) {
         const curTime = video.currentTime;
-        const pt = physicsEngine.interpolateAtTime(currentTrajectory, curTime);
+        const ptA = physicsEngine.interpolateAtTime(currentTrajectory, curTime);
+        const ptB = (secondaryTrajectory && secondaryTrajectory.length > 0)
+          ? physicsEngine.interpolateAtTime(secondaryTrajectory, curTime)
+          : null;
 
-        if (pt) {
-          vectorDrawer.render(video, currentTrajectory, pt);
-          updateHud(pt);
+        if (ptA) {
+          vectorDrawer.render(video, currentTrajectory, ptA, secondaryTrajectory, ptB);
+          updateHud(ptA, ptB);
         }
 
         // 即時繪製物理圖表 (隨著影片播放動態掃描更新)
@@ -683,16 +788,26 @@
     }
     requestAnimationFrame(renderLoop);
 
-    function updateHud(pt) {
+    function updateHud(pt, ptB = null) {
       document.getElementById("hudTime").textContent = `${pt.t.toFixed(3)} s`;
       document.getElementById("hudFrame").textContent = `Frame: ${pt.index !== undefined ? pt.index : '-'}`;
-      document.getElementById("hudPos").textContent = `${pt.meterX.toFixed(2)}, ${pt.meterY.toFixed(2)} m`;
-      const distM = Math.hypot(pt.meterX, pt.meterY);
-      document.getElementById("hudPixelPos").textContent = `距起點: ${distM.toFixed(2)} m`;
-      document.getElementById("hudVelMag").textContent = `${pt.v.toFixed(2)} m/s`;
-      document.getElementById("hudVelComponents").textContent = `vx: ${pt.vx.toFixed(2)} | vy: ${pt.vy.toFixed(2)}`;
-      document.getElementById("hudAccMag").textContent = `${pt.a.toFixed(1)} m/s²`;
-      document.getElementById("hudAccComponents").textContent = `ax: ${pt.ax.toFixed(1)} | ay: ${pt.ay.toFixed(1)}`;
+      if (ptB) {
+        const sepM = Math.hypot(ptB.meterX - pt.meterX, ptB.meterY - pt.meterY);
+        document.getElementById("hudPos").textContent = `A(${pt.meterX.toFixed(2)},${pt.meterY.toFixed(2)})`;
+        document.getElementById("hudPixelPos").textContent = `B(${ptB.meterX.toFixed(2)},${ptB.meterY.toFixed(2)}) | 距${sepM.toFixed(2)}m`;
+        document.getElementById("hudVelMag").textContent = `A:${pt.v.toFixed(2)} | B:${ptB.v.toFixed(2)}`;
+        document.getElementById("hudVelComponents").textContent = `Δvy: ${(ptB.vy - pt.vy).toFixed(2)} m/s`;
+        document.getElementById("hudAccMag").textContent = `A:${pt.a.toFixed(1)} | B:${ptB.a.toFixed(1)}`;
+        document.getElementById("hudAccComponents").textContent = `ay: ${pt.ay.toFixed(1)} vs ${ptB.ay.toFixed(1)}`;
+      } else {
+        document.getElementById("hudPos").textContent = `${pt.meterX.toFixed(2)}, ${pt.meterY.toFixed(2)} m`;
+        const distM = Math.hypot(pt.meterX, pt.meterY);
+        document.getElementById("hudPixelPos").textContent = `距起點: ${distM.toFixed(2)} m`;
+        document.getElementById("hudVelMag").textContent = `${pt.v.toFixed(2)} m/s`;
+        document.getElementById("hudVelComponents").textContent = `vx: ${pt.vx.toFixed(2)} | vy: ${pt.vy.toFixed(2)}`;
+        document.getElementById("hudAccMag").textContent = `${pt.a.toFixed(1)} m/s²`;
+        document.getElementById("hudAccComponents").textContent = `ax: ${pt.ax.toFixed(1)} | ay: ${pt.ay.toFixed(1)}`;
+      }
     }
 
     // 7. 影片播放控制列 (Playback Bar) 邏輯
@@ -745,7 +860,8 @@
 
     video.addEventListener("loadeddata", () => {
       syncPlaybackBarBounds();
-      physicsChart.setData(currentTrajectory, video.duration || 1);
+      physicsChart.setData(currentTrajectory, video.duration || 1, secondaryTrajectory);
+      analysisChart.setData(currentTrajectory, video.duration || 1, secondaryTrajectory);
     });
 
     spbScrubber.addEventListener("input", (e) => {
@@ -830,14 +946,25 @@
     };
 
     // 影像點選與表格/圖表雙向連動核心函式
-    function selectTrajectoryPoint(index, { seekVideo = true, scrollTable = true } = {}) {
-      if (!currentTrajectory || !currentTrajectory[index]) return;
-      selectedPointIndex = index;
-      const pt = currentTrajectory[index];
+    function selectTrajectoryPoint(index, { seekVideo = true, scrollTable = true, target = selectedTarget } = {}) {
+      const targetKey = (target === "B" && secondaryTrajectory.length > 0) ? "B" : "A";
+      const traj = targetKey === "B" ? secondaryTrajectory : currentTrajectory;
+      if (!traj || !traj[index]) return;
 
-      vectorDrawer.setSelectedIndex(index);
-      physicsChart.setSelectedIndex(index);
-      analysisChart.setSelectedIndex(index);
+      const targetChanged = targetKey !== selectedTarget;
+      selectedTarget = targetKey;
+      selectedPointIndex = index;
+      const pt = traj[index];
+
+      const targetSel = document.getElementById("analysisTargetSelect");
+      if (targetSel && targetSel.value !== targetKey) {
+        targetSel.value = targetKey;
+      }
+      if (targetChanged) renderAnalysisTable();
+
+      vectorDrawer.setSelectedIndex(index, targetKey);
+      physicsChart.setSelectedIndex(index, targetKey);
+      analysisChart.setSelectedIndex(index, targetKey);
 
       if (seekVideo && hasLoadedVideo) {
         video.pause();
@@ -855,8 +982,9 @@
         }
       });
 
+      const prefix = secondaryTrajectory.length > 0 ? `點${targetKey} #` : "#";
       document.getElementById("selectedPointBanner").textContent =
-        `🎯 已選取影像點 #${index} | t = ${pt.t.toFixed(3)}s | x = ${pt.meterX.toFixed(3)}m, y = ${pt.meterY.toFixed(3)}m | vy = ${pt.vy.toFixed(2)} m/s | ay = ${pt.ay.toFixed(2)} m/s²`;
+        `🎯 已選取影像點 ${prefix}${index} | t = ${pt.t.toFixed(3)}s | x = ${pt.meterX.toFixed(3)}m, y = ${pt.meterY.toFixed(3)}m | vy = ${pt.vy.toFixed(2)} m/s | ay = ${pt.ay.toFixed(2)} m/s²`;
       document.getElementById("btnJumpToSelectedVideo").style.display = hasLoadedVideo ? "inline-flex" : "none";
 
       physicsChart.render(pt.t);
@@ -868,9 +996,9 @@
     // 點擊影片上的追蹤點 -> 高亮對應影像點與圖表上的該點
     videoWrapper.addEventListener("click", (e) => {
       if (annotationLayer.enabled || !currentTrajectory || currentTrajectory.length === 0) return;
-      const hit = vectorDrawer.findNearestPoint(video, currentTrajectory, e.clientX, e.clientY, 40);
+      const hit = vectorDrawer.findNearestPoint(video, currentTrajectory, e.clientX, e.clientY, 40, secondaryTrajectory);
       if (hit) {
-        selectTrajectoryPoint(hit.index, { seekVideo: true, scrollTable: true });
+        selectTrajectoryPoint(hit.index, { seekVideo: true, scrollTable: true, target: hit.target });
       }
     });
 
@@ -1001,17 +1129,30 @@
     };
 
     // 10. 數據分析雙欄頁面 (左 1/3 表格 + 右 2/3 圖表 + Fitting + Excel 匯出)
+    const analysisTargetSelect = document.getElementById("analysisTargetSelect");
+    analysisTargetSelect.onchange = () => {
+      selectedTarget = analysisTargetSelect.value === "B" && secondaryTrajectory.length > 0 ? "B" : "A";
+      selectedPointIndex = null;
+      vectorDrawer.setSelectedIndex(null, selectedTarget);
+      physicsChart.setSelectedIndex(null, selectedTarget);
+      analysisChart.setSelectedIndex(null, selectedTarget);
+      renderAnalysisTable();
+    };
+
     function renderAnalysisTable() {
       const tbody = document.getElementById("analysisTableBody");
       const countBadge = document.getElementById("analysisPointCount");
-      countBadge.textContent = `${currentTrajectory.length} 點`;
+      const activeTraj = getActiveAnalysisTrajectory();
+      countBadge.textContent = secondaryTrajectory.length > 0
+        ? `A:${currentTrajectory.length} / B:${secondaryTrajectory.length}`
+        : `${activeTraj.length} 點`;
 
-      if (!currentTrajectory || currentTrajectory.length === 0) {
+      if (!activeTraj || activeTraj.length === 0) {
         tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 36px; color: #64748b;">尚無分析數據，請先載入示範影片或從手機端同步資料</td></tr>`;
         return;
       }
 
-      tbody.innerHTML = currentTrajectory.map((pt, idx) => `
+      tbody.innerHTML = activeTraj.map((pt, idx) => `
         <tr data-idx="${idx}" class="${selectedPointIndex === idx ? "selected-row" : ""}">
           <td>${idx}</td>
           <td>${pt.t.toFixed(3)}</td>
@@ -1026,7 +1167,7 @@
 
       tbody.querySelectorAll("tr[data-idx]").forEach(row => {
         row.onclick = () => {
-          selectTrajectoryPoint(Number(row.dataset.idx), { seekVideo: true, scrollTable: false });
+          selectTrajectoryPoint(Number(row.dataset.idx), { seekVideo: true, scrollTable: false, target: selectedTarget });
         };
       });
     }
@@ -1096,7 +1237,8 @@
 
     // Curve Fitting 回歸擬合控制
     document.getElementById("btnRunFit").onclick = () => {
-      if (!currentTrajectory || currentTrajectory.length < 3) {
+      const activeTraj = getActiveAnalysisTrajectory();
+      if (!activeTraj || activeTraj.length < 3) {
         alert("尚無足夠的數據點可供擬合，請先載入或分析影片！");
         return;
       }
@@ -1104,7 +1246,8 @@
       const modelType = document.getElementById("fitModelSelect").value;
 
       try {
-        const fit = computeCurveFit(currentTrajectory, targetKey, modelType);
+        const fit = computeCurveFit(activeTraj, targetKey, modelType);
+        fit.targetLabel = selectedTarget;
         currentFitResult = fit;
 
         // 自動切換圖表頁籤對應所選的擬合物理量
@@ -1121,7 +1264,8 @@
         physicsChart.setFitResult(fit);
         physicsChart.render(video.currentTime);
 
-        document.getElementById("fitEquationText").textContent = fit.equationText;
+        const who = secondaryTrajectory.length > 0 ? `[點${selectedTarget}] ` : "";
+        document.getElementById("fitEquationText").textContent = `${who}${fit.equationText}`;
         document.getElementById("fitMetaText").textContent = `R² = ${fit.r2.toFixed(4)}  |  ${fit.physicsHint}`;
         document.getElementById("fittingResultBanner").classList.add("active");
       } catch (err) {
@@ -1145,7 +1289,7 @@
         return;
       }
       try {
-        const res = await exportTrajectoryToExcel(currentTrajectory, currentFitResult, "physics-tracker");
+        const res = await exportTrajectoryToExcel(currentTrajectory, currentFitResult, "physics-tracker", secondaryTrajectory);
         console.log(`成功匯出 ${res.count} 筆數據 (${res.format})`);
       } catch (err) {
         alert("匯出 Excel 失敗: " + (err.message || err));
@@ -1179,6 +1323,8 @@
 
       try {
         const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+        currentVideoBlob = blob;
+        currentVideoName = "demo_projectile.webm";
         const url = URL.createObjectURL(blob);
         video.src = url;
         video.load();
@@ -1209,6 +1355,328 @@
         alert("載入示範影片失敗: " + (err.message || err));
       } finally {
         btn.textContent = "🧪 載入拋體示範影片";
+        btn.disabled = false;
+      }
+    };
+
+    // 專案儲存 / 載入 與 標記分析影片匯出邏輯
+    const projectModal = document.getElementById("projectModal");
+    const projectFileInput = document.getElementById("projectFileInput");
+    const attachVideoInput = document.getElementById("attachVideoInput");
+    const exportVideoStatusText = document.getElementById("exportVideoStatusText");
+
+    document.getElementById("btnProjectModal").onclick = () => {
+      projectModal.classList.add("active");
+    };
+    document.getElementById("btnCloseProjectModal").onclick = () => {
+      projectModal.classList.remove("active");
+    };
+    document.getElementById("btnStandbyLoadProject").onclick = () => {
+      projectFileInput.click();
+    };
+    document.getElementById("btnModalLoadProject").onclick = () => {
+      projectFileInput.click();
+    };
+    document.getElementById("btnAttachVideoToProject").onclick = () => {
+      attachVideoInput.click();
+    };
+
+    attachVideoInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      currentVideoBlob = file;
+      currentVideoName = file.name;
+      video.src = URL.createObjectURL(file);
+      video.load();
+      hasLoadedVideo = true;
+      standbyOverlay.classList.add("hidden");
+      projectModal.classList.remove("active");
+    };
+
+    function blobToDataUrl(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    function downloadBlobFile(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    document.getElementById("btnSaveProject").onclick = async () => {
+      if (!currentTrajectory || currentTrajectory.length === 0) {
+        alert("目前尚無分析完成的物理數據可儲存，請先分析影片或載入示範！");
+        return;
+      }
+
+      const btn = document.getElementById("btnSaveProject");
+      const origText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳ 打包專案中...";
+
+      try {
+        let videoDataUrl = null;
+        let videoOmitted = false;
+        const maxEmbedBytes = 15 * 1024 * 1024; // 15 MB 以下自動內嵌影片成單一獨立檔
+
+        if (currentVideoBlob) {
+          if (currentVideoBlob.size <= maxEmbedBytes) {
+            videoDataUrl = await blobToDataUrl(currentVideoBlob);
+          } else {
+            videoOmitted = true;
+          }
+        }
+
+        const projectData = {
+          app: "physics-tracker",
+          version: 2,
+          savedAt: new Date().toISOString(),
+          fps: activeFps,
+          clipStart,
+          clipEnd,
+          trajectory: currentTrajectory,
+          secondaryTrajectory,
+          fitMeta: currentFitResult ? {
+            targetKey: currentFitResult.targetKey,
+            modelType: currentFitResult.modelType,
+            targetLabel: currentFitResult.targetLabel || "A"
+          } : null,
+          annotations: annotationLayer.strokes || [],
+          videoName: currentVideoName,
+          videoDataUrl
+        };
+
+        const jsonBlob = new Blob([JSON.stringify(projectData)], { type: "application/json" });
+        const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+        downloadBlobFile(jsonBlob, `physics-project_${ts}.ptproj.json`);
+
+        if (videoOmitted) {
+          alert("⚠️ 專案數據、擬合與白板已儲存！\n因原影片大於 15 MB 未內嵌進 JSON，下次載入專案後可用「🎞️ 關聯本地影片檔」重新掛回原影片。");
+        }
+      } catch (err) {
+        alert("儲存專案失敗: " + (err.message || err));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    };
+
+    projectFileInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      projectFileInput.value = "";
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const proj = JSON.parse(text);
+        if (!proj || proj.app !== "physics-tracker" || !Array.isArray(proj.trajectory)) {
+          throw new Error("非有效的 Physics Tracker 專案檔");
+        }
+
+        activeFps = Number(proj.fps) || 60;
+        clipStart = Number(proj.clipStart) || 0;
+        clipEnd = proj.clipEnd !== undefined && proj.clipEnd !== null ? Number(proj.clipEnd) : null;
+
+        if (proj.videoDataUrl) {
+          const resp = await fetch(proj.videoDataUrl);
+          currentVideoBlob = await resp.blob();
+          currentVideoName = proj.videoName || "project_video.mp4";
+          video.src = URL.createObjectURL(currentVideoBlob);
+          video.load();
+          hasLoadedVideo = true;
+        } else {
+          currentVideoBlob = null;
+          hasLoadedVideo = false;
+          video.removeAttribute("src");
+          video.load();
+        }
+
+        setTrajectoryData(proj.trajectory, proj.secondaryTrajectory || []);
+
+        annotationLayer.clear(false);
+        if (Array.isArray(proj.annotations)) {
+          for (const st of proj.annotations) {
+            annotationLayer.receiveDrawEvent(st);
+          }
+        }
+
+        if (proj.fitMeta) {
+          selectedTarget = proj.fitMeta.targetLabel === "B" && secondaryTrajectory.length > 0 ? "B" : "A";
+          if (analysisTargetSelect) analysisTargetSelect.value = selectedTarget;
+          const fit = computeCurveFit(getActiveAnalysisTrajectory(), proj.fitMeta.targetKey, proj.fitMeta.modelType);
+          fit.targetLabel = selectedTarget;
+          currentFitResult = fit;
+          analysisChart.setFitResult(fit);
+          physicsChart.setFitResult(fit);
+          const who = secondaryTrajectory.length > 0 ? `[點${selectedTarget}] ` : "";
+          document.getElementById("fitEquationText").textContent = `${who}${fit.equationText}`;
+          document.getElementById("fitMetaText").textContent = `R² = ${fit.r2.toFixed(4)}  |  ${fit.physicsHint}`;
+          document.getElementById("fittingResultBanner").classList.add("active");
+        }
+
+        syncPlaybackBarBounds();
+        standbyOverlay.classList.add("hidden");
+        projectModal.classList.remove("active");
+
+        if (!hasLoadedVideo) {
+          alert("📊 已載入專案物理數據、白板與擬合結果！\n（此專案未內嵌影片，可直接檢視圖表/表格/匯出 Excel，或點「🎞️ 關聯本地影片檔」載入原影片）");
+        }
+      } catch (err) {
+        alert("載入專案失敗: " + (err.message || err));
+      }
+    };
+
+    document.getElementById("btnExportAnalyzedVideo").onclick = async () => {
+      if (!hasLoadedVideo || !video.videoWidth) {
+        alert("⚠️ 請先載入或從手機傳送影片，才能匯出標記分析影片！");
+        return;
+      }
+      if (!currentTrajectory || currentTrajectory.length === 0) {
+        alert("⚠️ 尚無物理軌跡數據，請先完成分析！");
+        return;
+      }
+      if (typeof MediaRecorder === "undefined") {
+        alert("⚠️ 目前瀏覽器不支援 MediaRecorder 影片錄製匯出！");
+        return;
+      }
+
+      const btn = document.getElementById("btnExportAnalyzedVideo");
+      btn.disabled = true;
+      exportVideoStatusText.style.display = "block";
+      exportVideoStatusText.textContent = "⏳ 正在準備離屏渲染畫布...";
+
+      const prevLoop = video.loop;
+      const prevRate = video.playbackRate;
+      const prevTime = video.currentTime;
+      const wasPaused = video.paused;
+      video.pause();
+
+      try {
+        const { start, end } = getClipBounds();
+        const span = Math.max(0.1, end - start);
+        const srcW = video.videoWidth || 1280;
+        const srcH = video.videoHeight || 720;
+        const scaleDown = srcW > 1280 ? (1280 / srcW) : 1;
+        const outCanvas = document.createElement("canvas");
+        outCanvas.width = Math.round(srcW * scaleDown);
+        outCanvas.height = Math.round(srcH * scaleDown);
+        const outCtx = outCanvas.getContext("2d");
+
+        const renderParams = {
+          scale: outCanvas.width / srcW,
+          offsetX: 0,
+          offsetY: 0,
+          videoWidth: srcW,
+          videoHeight: srcH
+        };
+
+        let mimeType = "";
+        for (const cand of ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm", "video/mp4"]) {
+          if (MediaRecorder.isTypeSupported(cand)) {
+            mimeType = cand;
+            break;
+          }
+        }
+
+        const stream = outCanvas.captureStream(30);
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5000000 }) : new MediaRecorder(stream);
+        const chunks = [];
+        recorder.ondataavailable = (ev) => {
+          if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+        };
+
+        const stoppedPromise = new Promise((resolve) => {
+          recorder.onstop = resolve;
+        });
+
+        video.loop = false;
+        video.playbackRate = 1.0;
+        video.currentTime = start;
+        await new Promise((res) => {
+          video.addEventListener("seeked", res, { once: true });
+          setTimeout(res, 600);
+        });
+
+        recorder.start(100);
+        await video.play();
+
+        await new Promise((resolve) => {
+          let finished = false;
+          const finish = () => {
+            if (finished) return;
+            finished = true;
+            resolve();
+          };
+
+          const drawExportFrame = () => {
+            if (finished) return;
+            const curT = video.currentTime;
+            outCtx.drawImage(video, 0, 0, outCanvas.width, outCanvas.height);
+
+            const ptA = physicsEngine.interpolateAtTime(currentTrajectory, curT);
+            const ptB = (secondaryTrajectory && secondaryTrajectory.length > 0)
+              ? physicsEngine.interpolateAtTime(secondaryTrajectory, curT)
+              : null;
+            if (ptA) {
+              vectorDrawer.render(video, currentTrajectory, ptA, secondaryTrajectory, ptB, outCtx, renderParams);
+            }
+            if (annotationCanvas.width > 0 && annotationCanvas.height > 0) {
+              outCtx.drawImage(annotationCanvas, 0, 0, outCanvas.width, outCanvas.height);
+            }
+
+            // 角落即時數據印記
+            outCtx.save();
+            const barText = (ptA && ptB)
+              ? `t=${curT.toFixed(3)}s | A: y=${ptA.meterY.toFixed(2)}m v=${ptA.v.toFixed(2)}m/s | B: y=${ptB.meterY.toFixed(2)}m v=${ptB.v.toFixed(2)}m/s`
+              : (ptA ? `t=${curT.toFixed(3)}s | x=${ptA.meterX.toFixed(2)}m y=${ptA.meterY.toFixed(2)}m | |v|=${ptA.v.toFixed(2)}m/s | |a|=${ptA.a.toFixed(1)}m/s²` : `t=${curT.toFixed(3)}s`);
+            outCtx.font = "bold 15px monospace";
+            const tw = outCtx.measureText(barText).width;
+            outCtx.fillStyle = "rgba(15, 23, 42, 0.78)";
+            outCtx.fillRect(14, 14, tw + 20, 30);
+            outCtx.fillStyle = "#f8fafc";
+            outCtx.fillText(barText, 24, 34);
+            outCtx.restore();
+
+            const pct = Math.min(99, Math.max(0, Math.round(((curT - start) / span) * 100)));
+            exportVideoStatusText.textContent = `🎬 正在錄製匯出分析影片... ${pct}% (${curT.toFixed(2)}/${end.toFixed(2)}s)`;
+
+            if (curT >= end - 0.02 || video.ended || video.paused) {
+              finish();
+              return;
+            }
+            requestAnimationFrame(drawExportFrame);
+          };
+
+          video.addEventListener("ended", finish, { once: true });
+          requestAnimationFrame(drawExportFrame);
+        });
+
+        video.pause();
+        recorder.stop();
+        await stoppedPromise;
+
+        const outType = mimeType || "video/webm";
+        const ext = outType.includes("mp4") ? "mp4" : "webm";
+        const outBlob = new Blob(chunks, { type: outType });
+        const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+        downloadBlobFile(outBlob, `physics-analyzed_${ts}.${ext}`);
+        exportVideoStatusText.textContent = `✅ 匯出完成！(physics-analyzed_${ts}.${ext})`;
+      } catch (err) {
+        console.error("匯出影片失敗:", err);
+        exportVideoStatusText.textContent = "❌ 匯出失敗：" + (err.message || err);
+      } finally {
+        video.loop = prevLoop;
+        video.playbackRate = prevRate;
+        video.currentTime = prevTime;
+        if (!wasPaused) video.play().catch(() => {});
         btn.disabled = false;
       }
     };
