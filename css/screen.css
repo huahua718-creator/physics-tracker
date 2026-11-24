@@ -1307,4 +1307,51 @@ body {
   text-align: right;
 }
 
+.hub-credit-footer {
+  width: 100%;
+  text-align: center;
+  padding-top: 10px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.84rem;
+  color: #94a3b8;
+}
+
+.hub-credit-footer a {
+  color: #38bdf8;
+  font-weight: 700;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(56, 189, 248, 0.6);
+}
+
+.hub-credit-footer a:hover {
+  color: #7dd3fc;
+  border-bottom-style: solid;
+}
+
+.video-wait-banner {
+  position: absolute;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  backdrop-filter: blur(12px);
+  border-radius: 999px;
+  padding: 8px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 45;
+  font-size: 0.84rem;
+  color: #e2e8f0;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.video-wait-banner.hidden {
+  display: none;
+}
+
 

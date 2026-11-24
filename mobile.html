@@ -31,10 +31,11 @@
 
   <!-- 功能頁籤 (Tabs) -->
   <nav class="tab-bar">
-    <button class="tab-btn active" data-tab="tab-track">1. 影片追蹤</button>
-    <button class="tab-btn" data-tab="tab-sensors">2. 感測實驗</button>
-    <button class="tab-btn" data-tab="tab-remote">3. 播放遙控</button>
-    <button class="tab-btn" data-tab="tab-draw">4. 白板手寫</button>
+    <button class="tab-btn active" data-tab="tab-home">0. 入口</button>
+    <button class="tab-btn" data-tab="tab-track">1. 影像</button>
+    <button class="tab-btn" data-tab="tab-sensors">2. 感測</button>
+    <button class="tab-btn" data-tab="tab-remote">3. 遙控</button>
+    <button class="tab-btn" data-tab="tab-draw">4. 白板</button>
     <button class="tab-btn" data-tab="tab-settings">5. 設定</button>
   </nav>
 
@@ -45,8 +46,35 @@
   </div>
 
   <main class="main-content">
+    <!-- TAB 0: 入口掃碼配對與實驗選擇 -->
+    <section class="tab-pane active" id="tab-home">
+      <div class="card">
+        <div class="card-title">
+          <span>🔗 0. 大屏掃碼配對狀態</span>
+          <span style="font-size: 0.74rem; color: #38bdf8;" id="homeNodeLabel">node_01</span>
+        </div>
+        <p class="card-desc">請確認手機已與電腦大屏使用相同 6 碼 PIN 連線（用系統相機掃描電腦 QR Code 會自動帶入 PIN 碼）。</p>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="homeQuickPin" class="form-input-number" style="flex: 1; text-align: center; font-weight: bold; letter-spacing: 3px;" placeholder="輸入 6 碼 PIN">
+          <button class="btn btn-primary" id="btnHomeQuickConnect" style="padding: 8px 14px;">連線</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>🧪 選擇要進行的實驗</span>
+        </div>
+        <p class="card-desc">點擊下方任一實驗卡片，系統會自動切換至對應功能頁面並同步通知電腦端。</p>
+        <div class="sensor-mode-grid" id="mobileHomeHubGrid"></div>
+      </div>
+
+      <div class="mobile-credit-footer">
+        Design by <a href="https://huahua-tools-portal.vercel.app/" target="_blank" rel="noopener noreferrer">華爸的數位魔法</a>
+      </div>
+    </section>
+
     <!-- TAB 1: 影像追蹤與物理分析 -->
-    <section class="tab-pane active" id="tab-track">
+    <section class="tab-pane" id="tab-track">
       <!-- 影片選取卡片 -->
       <div class="card">
         <div class="card-title">
@@ -392,6 +420,7 @@
     const connRoomText = document.getElementById("connRoomText");
     connRoomText.textContent = `連線中 | PIN: ${screenId}`;
     document.getElementById("inputRoomPin").value = screenId;
+    document.getElementById("homeQuickPin").value = screenId;
 
     let syncManager = new SyncManager(screenId, "mobile");
     const physicsEngine = new PhysicsEngine();
@@ -1602,7 +1631,45 @@
         mobileNodeBadge.textContent = `${syncManager.nodeId}`;
         mobileNodeBadge.style.color = syncManager.nodeColor || "#38bdf8";
       }
+      const homeLbl = document.getElementById("homeNodeLabel");
+      if (homeLbl && syncManager.nodeId) {
+        homeLbl.textContent = `${syncManager.nodeId}`;
+        homeLbl.style.color = syncManager.nodeColor || "#38bdf8";
+      }
     });
+
+    // 11. 0 分頁（入口掃碼與實驗選擇）邏輯
+    const mobileHomeHubGrid = document.getElementById("mobileHomeHubGrid");
+    mobileHomeHubGrid.innerHTML = LAB_MODE_ORDER.map(id => {
+      const m = LAB_MODES[id];
+      return `<button class="sensor-mode-chip" data-home-mode="${id}" style="border-color: rgba(255,255,255,0.14);"><span>${m.icon}</span><span>${m.shortTitle}</span></button>`;
+    }).join("");
+
+    mobileHomeHubGrid.querySelectorAll("[data-home-mode]").forEach(btn => {
+      btn.onclick = async () => {
+        const modeId = btn.dataset.homeMode;
+        if (modeId === "VIDEO_TRACKER") {
+          await mobileSensorLab.stop();
+          document.querySelector('[data-tab="tab-track"]')?.click();
+          syncManager.broadcastCommand({ cmd: "SET_MODE", mode: "VIDEO_TRACKER" });
+        } else if (LAB_MODES[modeId]) {
+          if (mobileSensorLab.running && mobileSensorLab.activeMode !== modeId) {
+            await mobileSensorLab.stop();
+          }
+          selectMobileSensorMode(modeId);
+          document.querySelector('[data-tab="tab-sensors"]')?.click();
+          syncManager.broadcastCommand({ cmd: "SET_MODE", mode: modeId });
+        }
+      };
+    });
+
+    document.getElementById("btnHomeQuickConnect").onclick = () => {
+      const newPin = document.getElementById("homeQuickPin").value.trim();
+      if (newPin) {
+        document.getElementById("inputRoomPin").value = newPin;
+        document.getElementById("btnConnectPin").click();
+      }
+    };
   </script>
 </body>
 </html>

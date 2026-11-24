@@ -86,11 +86,11 @@ body {
 
 .tab-btn {
   flex: 1;
-  padding: 11px 4px;
+  padding: 11px 2px;
   border: none;
   background: transparent;
   color: var(--text-sub);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -492,4 +492,18 @@ input:checked + .slider:before {
   font-size: 0.82rem;
   color: #6ee7b7;
   line-height: 1.5;
+}
+
+.mobile-credit-footer {
+  text-align: center;
+  padding: 12px 8px 4px;
+  font-size: 0.82rem;
+  color: var(--text-sub);
+}
+
+.mobile-credit-footer a {
+  color: var(--primary-color);
+  font-weight: 700;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(56, 189, 248, 0.6);
 }
