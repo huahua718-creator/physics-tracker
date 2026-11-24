@@ -1,21 +1,16 @@
 /**
  * vector-drawer.js
- * 大屏物理向量與殘影繪製引擎 (Canvas Overlay)
+ * 大屏物理軌跡與殘影繪製引擎 (Canvas Overlay)
  * 職責：
  * 1. 座標轉換 (影片原生解析度 -> 螢幕顯示 Canvas 尺寸)
  * 2. 運動軌跡殘影點列 (Strobe Effect) 與漸變消褪
- * 3. 速度向量 (v 綠色箭頭) 與數值標註
- * 4. 加速度向量 (a 紅色箭頭) 與數值標註
+ * 3. 支援點擊影像點高亮選取，與圖表/表格雙向連動
  */
 
 export class VectorDrawer {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
-
-    // 向量繪製縮放因子 (公尺/秒 -> 螢幕像素長度)
-    this.vScale = options.vScale || 25; // 1 m/s = 25px
-    this.aScale = options.aScale || 8;  // 1 m/s^2 = 8px
 
     // 圖層顯示開關 (已移除速度與加速度箭頭，維持大屏投影畫面乾淨)
     this.showGhost = options.showGhost !== undefined ? options.showGhost : true;
@@ -26,6 +21,13 @@ export class VectorDrawer {
     // 殘影設定
     this.strobeStep = options.strobeStep || 3; // 每隔幾幀保留一顆殘影
     this.ghostMaxCount = options.ghostMaxCount || 40; // 最大殘影數量
+
+    // 使用者點選的特定影像點索引
+    this.selectedIndex = null;
+  }
+
+  setSelectedIndex(index) {
+    this.selectedIndex = (index !== null && index !== undefined && index >= 0) ? index : null;
   }
 
   /**
@@ -68,85 +70,33 @@ export class VectorDrawer {
   }
 
   /**
-   * 繪製向量箭頭 (含箭頭錐形與文字)
+   * 依據螢幕點擊座標 (clientX, clientY) 尋找距離最近的影片軌跡點
    */
-  drawArrow(fromX, fromY, vecX, vecY, options = {}) {
-    const color = options.color || "#00e676";
-    const lineWidth = options.lineWidth || 3.5;
-    const arrowLen = options.arrowLen || 12;
-    const label = options.label || "";
+  findNearestPoint(video, trajectory, clientX, clientY, maxDistPx = 38) {
+    if (!video || !trajectory || trajectory.length === 0) return null;
+    this.syncSizeWithVideo(video);
 
-    const toX = fromX + vecX;
-    const toY = fromY + vecY;
-    const mag = Math.hypot(vecX, vecY);
+    const rect = this.canvas.getBoundingClientRect();
+    const clickX = clientX - rect.left;
+    const clickY = clientY - rect.top;
+    const params = this.getVideoRenderParams(video);
 
-    if (mag < 2) return; // 向量極小時略過
+    let bestIndex = -1;
+    let bestDist = Infinity;
 
-    const angle = Math.atan2(vecY, vecX);
-    const ctx = this.ctx;
-
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.lineCap = "round";
-
-    // 陰影增加高對比可讀性
-    ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
-    ctx.shadowBlur = 6;
-
-    // 繪製箭桿
-    ctx.beginPath();
-    ctx.moveTo(fromX, fromY);
-    ctx.lineTo(toX, toY);
-    ctx.stroke();
-
-    // 繪製箭頭三角錐
-    ctx.beginPath();
-    ctx.moveTo(toX, toY);
-    ctx.lineTo(
-      toX - arrowLen * Math.cos(angle - Math.PI / 6),
-      toY - arrowLen * Math.sin(angle - Math.PI / 6)
-    );
-    ctx.lineTo(
-      toX - arrowLen * Math.cos(angle + Math.PI / 6),
-      toY - arrowLen * Math.sin(angle + Math.PI / 6)
-    );
-    ctx.closePath();
-    ctx.fill();
-
-    // 繪製向量標籤文字
-    if (label && this.showValues) {
-      ctx.font = "bold 13px Inter, -apple-system, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-
-      const textOffsetDist = 18;
-      const textX = toX + textOffsetDist * Math.cos(angle);
-      const textY = toY + textOffsetDist * Math.sin(angle);
-
-      // 標籤背景泡泡
-      const textMetrics = ctx.measureText(label);
-      const padding = 5;
-      ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.roundRect(
-        textX - textMetrics.width / 2 - padding,
-        textY - 9,
-        textMetrics.width + padding * 2,
-        18,
-        4
-      );
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(label, textX, textY);
+    for (let i = 0; i < trajectory.length; i++) {
+      const coords = this.toCanvasCoords(trajectory[i].x, trajectory[i].y, params);
+      const dist = Math.hypot(coords.x - clickX, coords.y - clickY);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = i;
+      }
     }
 
-    ctx.restore();
+    if (bestIndex >= 0 && bestDist <= maxDistPx) {
+      return { index: bestIndex, point: trajectory[bestIndex], dist: bestDist };
+    }
+    return null;
   }
 
   /**
@@ -188,6 +138,43 @@ export class VectorDrawer {
     ctx.setLineDash([4, 4]);
     ctx.stroke();
     ctx.restore();
+
+    // 3. 若有選中的影像點，繪製醒目的金色選取標記與座標氣泡
+    if (this.selectedIndex !== null && trajectory[this.selectedIndex]) {
+      const selPt = trajectory[this.selectedIndex];
+      const selCoords = this.toCanvasCoords(selPt.x, selPt.y, params);
+
+      ctx.save();
+      ctx.fillStyle = "rgba(250, 204, 21, 0.3)";
+      ctx.beginPath();
+      ctx.arc(selCoords.x, selCoords.y, 18, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "#facc15";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(selCoords.x, selCoords.y, 11, 0, Math.PI * 2);
+      ctx.stroke();
+
+      const label = `#${this.selectedIndex} (${selPt.t.toFixed(2)}s, y:${selPt.meterY.toFixed(2)}m)`;
+      ctx.font = "bold 12px -apple-system, sans-serif";
+      const metrics = ctx.measureText(label);
+      const boxX = Math.min(this.canvas.width - metrics.width - 16, selCoords.x + 16);
+      const boxY = Math.max(24, selCoords.y - 12);
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.strokeStyle = "#facc15";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(boxX, boxY - 11, metrics.width + 12, 22, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#fef08a";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, boxX + 6, boxY);
+      ctx.restore();
+    }
   }
 
   /**
@@ -200,6 +187,18 @@ export class VectorDrawer {
     // 篩選出當前時間之前的軌跡點
     const pastPoints = trajectory.filter(p => p.t <= currentPoint.t);
     const totalPast = pastPoints.length;
+
+    // 完整軌跡淡色預覽點 (方便滑鼠隨時點擊影片上的任意殘影點)
+    for (let i = 0; i < trajectory.length; i += this.strobeStep) {
+      const pt = trajectory[i];
+      if (pt.t > currentPoint.t) {
+        const coords = this.toCanvasCoords(pt.x, pt.y, params);
+        ctx.fillStyle = "rgba(148, 163, 184, 0.25)";
+        ctx.beginPath();
+        ctx.arc(coords.x, coords.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     // 連續軌跡平滑細線
     if (totalPast > 1) {
@@ -228,7 +227,7 @@ export class VectorDrawer {
       const coords = this.toCanvasCoords(pt.x, pt.y, params);
 
       // 透明度漸變 (越接近當前時間越清晰)
-      const alpha = Math.max(0.2, (i + 1) / n);
+      const alpha = Math.max(0.25, (i + 1) / n);
       const radius = 5 + (alpha * 3);
 
       ctx.fillStyle = `rgba(56, 189, 248, ${alpha * 0.8})`;

@@ -22,6 +22,9 @@ export class PhysicsChart {
     this.yPan = 0.0; // 物理數值位移
     this.focusDataRange = true; // 預設聚焦數據起伏區間 (避免 0 點或碰撞尖峰壓扁曲線)
     this.onZoomChange = options.onZoomChange || null;
+    this.onPointSelect = options.onPointSelect || null;
+    this.fitResult = null;
+    this.selectedIndex = null;
     this.lastCurrentTime = 0;
 
     // 配色定義 (與大屏 HUD 與向量箭頭一致)
@@ -44,6 +47,9 @@ export class PhysicsChart {
 
   initInteractions() {
     let isDragging = false;
+    let dragDistance = 0;
+    let downClientX = 0;
+    let downClientY = 0;
     let lastClientX = 0;
     let lastClientY = 0;
 
@@ -65,6 +71,9 @@ export class PhysicsChart {
     this.canvas.addEventListener("mousedown", (e) => {
       if (!this.trajectory || this.trajectory.length < 2) return;
       isDragging = true;
+      dragDistance = 0;
+      downClientX = e.clientX;
+      downClientY = e.clientY;
       lastClientX = e.clientX;
       lastClientY = e.clientY;
       this.canvas.style.cursor = "grabbing";
@@ -74,8 +83,11 @@ export class PhysicsChart {
       if (!isDragging) return;
       const dx = e.clientX - lastClientX;
       const dy = e.clientY - lastClientY;
+      dragDistance += Math.hypot(dx, dy);
       lastClientX = e.clientX;
       lastClientY = e.clientY;
+
+      if (dragDistance < 4) return;
 
       const rect = this.canvas.getBoundingClientRect();
       const plotW = Math.max(1, rect.width - this.padding.left - this.padding.right);
@@ -97,12 +109,55 @@ export class PhysicsChart {
       this.render(this.lastCurrentTime);
     });
 
-    window.addEventListener("mouseup", () => {
-      if (isDragging) {
-        isDragging = false;
-        this.canvas.style.cursor = "grab";
+    window.addEventListener("mouseup", (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      this.canvas.style.cursor = "grab";
+
+      // 若移動距離極小，視為「點擊選取圖表上的點」
+      if (dragDistance < 5 && this.trajectory && this.trajectory.length >= 2) {
+        const rect = this.canvas.getBoundingClientRect();
+        const clickX = downClientX - rect.left;
+        const clickY = downClientY - rect.top;
+        const plotW = rect.width - this.padding.left - this.padding.right;
+        const plotH = rect.height - this.padding.top - this.padding.bottom;
+
+        if (
+          clickX >= this.padding.left && clickX <= this.padding.left + plotW &&
+          clickY >= this.padding.top && clickY <= this.padding.top + plotH
+        ) {
+          const tStartAll = this.trajectory[0].t;
+          const tEndAll = Math.max(this.trajectory[this.trajectory.length - 1].t, tStartAll + 0.1);
+          const totalSpanT = tEndAll - tStartAll;
+          const viewSpanT = totalSpanT / this.xZoom;
+          const viewTMin = tStartAll + this.xPan * totalSpanT;
+          const clickedT = viewTMin + ((clickX - this.padding.left) / plotW) * viewSpanT;
+
+          let bestIdx = 0;
+          let bestDiff = Infinity;
+          for (let i = 0; i < this.trajectory.length; i++) {
+            const diff = Math.abs(this.trajectory[i].t - clickedT);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              bestIdx = i;
+            }
+          }
+          this.setSelectedIndex(bestIdx);
+          if (this.onPointSelect) {
+            this.onPointSelect(bestIdx, this.trajectory[bestIdx]);
+          }
+          this.render(this.trajectory[bestIdx].t);
+        }
       }
     });
+  }
+
+  setFitResult(fitResult) {
+    this.fitResult = fitResult || null;
+  }
+
+  setSelectedIndex(index) {
+    this.selectedIndex = (index !== null && index !== undefined && index >= 0) ? index : null;
   }
 
   setData(trajectory, duration = null) {
@@ -287,7 +342,13 @@ export class PhysicsChart {
       this.drawSeriesLine(ctx, line, mapX, mapY, currentTime, dpr);
     });
 
+    // 若有 Fitting 回歸結果且對應目前顯示的物理量，繪製亮紫色擬合曲線
+    if (this.fitResult && seriesConfig.lines.some(l => l.key === this.fitResult.targetKey)) {
+      this.drawFitCurve(ctx, this.fitResult, mapX, mapY, dpr);
+    }
+
     this.drawCurrentTimeCursor(ctx, pad, plotH, currentTime, viewTMin, viewTMax, mapX, mapY, seriesConfig, dpr);
+    this.drawSelectedPointMarker(ctx, pad, mapX, mapY, seriesConfig, dpr);
     ctx.restore();
 
     // 4. 繪製圖例 (Legend) 與即時數據看板
@@ -538,6 +599,53 @@ export class PhysicsChart {
       });
     }
 
+    ctx.restore();
+  }
+
+  drawFitCurve(ctx, fitResult, mapX, mapY, dpr) {
+    if (!fitResult || !fitResult.curvePoints || fitResult.curvePoints.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = "#e879f9";
+    ctx.lineWidth = 2.5 * dpr;
+    ctx.setLineDash([7 * dpr, 4 * dpr]);
+    ctx.shadowColor = "rgba(232, 121, 249, 0.45)";
+    ctx.shadowBlur = 6 * dpr;
+    ctx.beginPath();
+    fitResult.curvePoints.forEach((pt, idx) => {
+      const x = mapX(pt.t);
+      const y = mapY(pt.val);
+      if (idx === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawSelectedPointMarker(ctx, pad, mapX, mapY, seriesConfig, dpr) {
+    if (this.selectedIndex === null || !this.trajectory[this.selectedIndex]) return;
+    const pt = this.trajectory[this.selectedIndex];
+    const sx = mapX(pt.t);
+
+    ctx.save();
+    seriesConfig.lines.forEach(line => {
+      const val = pt[line.key];
+      if (val === undefined) return;
+      const sy = mapY(val);
+
+      ctx.strokeStyle = "#facc15";
+      ctx.fillStyle = "rgba(250, 204, 21, 0.28)";
+      ctx.lineWidth = 2.5 * dpr;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 8 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#fef08a";
+      ctx.font = `bold ${10 * dpr}px monospace`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(`#${this.selectedIndex}: ${val.toFixed(2)}`, sx + 8 * dpr, sy - 6 * dpr);
+    });
     ctx.restore();
   }
 

@@ -33,20 +33,23 @@
     </div>
 
     <div class="top-actions">
-      <button class="btn-icon" id="btnToggleChart" title="顯示/隱藏物理圖表">
-        📈 物理圖表
+      <button class="btn-icon" id="btnToggleAnalysisView" title="切換數據分析頁面 (左1/3表格 + 右2/3圖表 + 擬合)">
+        📑 數據分析
+      </button>
+      <button class="btn-icon" id="btnTopExportExcel" title="匯出物理數據成 Excel (.xlsx)">
+        📥 匯出Excel
+      </button>
+      <button class="btn-icon" id="btnToggleChart" title="顯示/隱藏浮動物理圖表">
+        📈 圖表窗
       </button>
       <button class="btn-icon" id="btnToggleDraw" title="切換大屏繪圖工具列">
-        ✏️ 繪圖白板
+        ✏️ 白板
       </button>
       <button class="btn-icon" id="btnToggleHud" title="顯示/隱藏物理數據儀表板">
-        📊 數據儀表
-      </button>
-      <button class="btn-icon" id="btnClearDraw" title="清除課堂手寫筆跡">
-        🧹 清除筆跡
+        📊 儀表
       </button>
       <button class="btn-icon" id="btnSettings" title="雲端 Firebase 設定">
-        ⚙️ 連線設定
+        ⚙️ 設定
       </button>
       <button class="btn-icon" id="btnFullscreen" title="切換全螢幕">
         ⛶ 全螢幕
@@ -100,9 +103,12 @@
       </div>
     </div>
 
-    <!-- 大屏端即時繪圖工具列 (可直接在大屏上切換畫筆/顏色/手寫標註) -->
+    <!-- 大屏端即時繪圖與選點工具列 -->
     <div class="screen-draw-toolbar" id="screenDrawToolbar">
-      <button class="draw-tool-btn active" id="sdtTogglePen" title="切換繪圖模式 (開/關)">
+      <button class="draw-tool-btn active" id="sdtSelectMode" title="選取影像點模式 (點擊影片點對應圖表)">
+        🎯
+      </button>
+      <button class="draw-tool-btn" id="sdtTogglePen" title="切換手寫塗鴉模式">
         ✏️
       </button>
       <div class="sdt-divider"></div>
@@ -220,6 +226,106 @@
     </div>
   </main>
 
+  <!-- 數據分析雙欄頁面 (左 1/3 數據表格 + 右 2/3 圖表與 Fitting 擬合) -->
+  <section class="analysis-workspace hidden" id="analysisWorkspace">
+    <!-- 左側 1/3：物理數據表格 -->
+    <div class="analysis-pane">
+      <div class="analysis-pane-header">
+        <div class="analysis-pane-title">
+          <span>📋 運動數據表</span>
+          <span class="analysis-count-badge" id="analysisPointCount">0 點</span>
+        </div>
+        <button class="btn-export" id="btnExportExcel">
+          📥 匯出 Excel (.xlsx)
+        </button>
+      </div>
+      <div class="analysis-table-scroll">
+        <table class="analysis-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>t (s)</th>
+              <th>x (m)</th>
+              <th>y (m)</th>
+              <th>vx</th>
+              <th>vy</th>
+              <th>ax</th>
+              <th>ay</th>
+            </tr>
+          </thead>
+          <tbody id="analysisTableBody">
+            <tr>
+              <td colspan="8" style="text-align: center; padding: 36px; color: #64748b;">
+                尚無分析數據，請先載入示範影片或從手機端同步資料
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 右側 2/3：大圖表 + 曲線擬合 (Fitting) -->
+    <div class="analysis-pane">
+      <div class="analysis-pane-header">
+        <div class="chart-tabs" id="analysisChartTabs">
+          <button class="chart-tab-btn active" data-achart="xt">位移 x-t / y-t</button>
+          <button class="chart-tab-btn" data-achart="vt">速度 v-t</button>
+          <button class="chart-tab-btn" data-achart="at">加速度 a-t</button>
+        </div>
+
+        <div class="chart-controls">
+          <select class="chart-select-filter" id="analysisAxisFilter">
+            <option value="all">全部分量</option>
+            <option value="x">僅 X 軸</option>
+            <option value="y">僅 Y 軸</option>
+          </select>
+          <button class="chart-zoom-btn active" id="btnAnaFocus">🎯 聚焦</button>
+          <button class="chart-zoom-btn" id="btnAnaZoomIn">＋</button>
+          <button class="chart-zoom-btn" id="btnAnaZoomOut">－</button>
+          <button class="chart-zoom-btn" id="btnAnaTimeIn">⏱＋</button>
+          <button class="chart-zoom-btn" id="btnAnaZoomReset">↺</button>
+          <span class="chart-zoom-badge" id="anaZoomBadge">1.0x</span>
+          <button class="btn-icon" id="btnCloseAnalysisView" style="padding: 4px 10px; font-size: 0.78rem;">🎬 返回影像</button>
+        </div>
+      </div>
+
+      <!-- Curve Fitting 工具列 -->
+      <div class="fitting-bar">
+        <span class="fitting-label">📐 曲線擬合 (Fitting)：</span>
+        <select class="fitting-select" id="fitTargetSelect">
+          <option value="meterY" selected>Y 軸位移 y(t)</option>
+          <option value="meterX">X 軸位移 x(t)</option>
+          <option value="vy">Y 軸速度 vy(t)</option>
+          <option value="vx">X 軸速度 vx(t)</option>
+          <option value="ay">Y 軸加速度 ay(t)</option>
+          <option value="ax">X 軸加速度 ax(t)</option>
+        </select>
+        <select class="fitting-select" id="fitModelSelect">
+          <option value="quadratic" selected>二次拋物線 (At² + Bt + C)</option>
+          <option value="linear">一次線性 (At + B)</option>
+          <option value="constant">常數平均 (C)</option>
+        </select>
+        <button class="btn-fit" id="btnRunFit">✨ 執行擬合</button>
+        <button class="chart-zoom-btn" id="btnClearFit">清除擬合</button>
+      </div>
+
+      <!-- 擬合方程式與 R² 結果橫幅 -->
+      <div class="fitting-result-banner" id="fittingResultBanner">
+        <span class="fitting-eq" id="fitEquationText">y(t) = ...</span>
+        <span class="fitting-meta" id="fitMetaText">R² = 0.000 | ...</span>
+      </div>
+
+      <div class="analysis-chart-body">
+        <canvas id="analysisChartCanvas" style="width: 100%; height: 100%; display: block;"></canvas>
+      </div>
+
+      <div class="selected-point-footer">
+        <span id="selectedPointBanner">💡 提示：點擊左側表格列、圖表上的點或影像中的軌跡點，即可雙向同步定位！</span>
+        <button class="chart-zoom-btn" id="btnJumpToSelectedVideo" style="display: none;">🎞️ 跳至影片檢視此點</button>
+      </div>
+    </div>
+  </section>
+
   <!-- Firebase 設定彈窗 -->
   <div class="modal-backdrop" id="settingsModal">
     <div class="modal-card">
@@ -260,6 +366,7 @@
     import { AnnotationLayer } from "./js/annotation.js";
     import { VideoTracker } from "./js/video-tracker.js";
     import { PhysicsChart } from "./js/physics-chart.js";
+    import { computeCurveFit, exportTrajectoryToExcel } from "./js/data-analysis.js";
 
     // 1. 初始化房間 PIN 碼 (取 URL 參數或隨機 6 碼)
     const urlParams = new URLSearchParams(window.location.search);
@@ -309,7 +416,7 @@
     const physicsEngine = new PhysicsEngine();
     const vectorDrawer = new VectorDrawer(vectorCanvas);
     const annotationLayer = new AnnotationLayer(annotationCanvas, {
-      enabled: true,
+      enabled: false, // 預設開啟「🎯 選取影像點」模式，點擊 ✏️ 可切換手寫白板
       color: "#ef4444",
       lineWidth: 6,
       onDrawEvent: (e) => syncManager.sendDrawEvent(e)
@@ -320,13 +427,42 @@
       axisFilter: "all",
       drawMode: "dynamic"
     });
+    const analysisWorkspace = document.getElementById("analysisWorkspace");
+    const analysisChart = new PhysicsChart(document.getElementById("analysisChartCanvas"), {
+      type: "xt",
+      axisFilter: "all",
+      drawMode: "full"
+    });
 
     let currentTrajectory = [];
+    let currentFitResult = null;
+    let selectedPointIndex = null;
     let hasLoadedVideo = false;
     let isGeneratingDemo = false;
     let isReceivingVideo = false;
     let clipStart = 0;
     let clipEnd = null;
+
+    function setTrajectoryData(trajectory) {
+      currentTrajectory = trajectory || [];
+      currentFitResult = null;
+      selectedPointIndex = null;
+      vectorDrawer.setSelectedIndex(null);
+      physicsChart.setFitResult(null);
+      physicsChart.setSelectedIndex(null);
+      analysisChart.setFitResult(null);
+      analysisChart.setSelectedIndex(null);
+      document.getElementById("fittingResultBanner").classList.remove("active");
+      document.getElementById("btnJumpToSelectedVideo").style.display = "none";
+      document.getElementById("selectedPointBanner").textContent = "💡 提示：點擊左側表格列、圖表上的點或影像中的軌跡點，即可雙向同步定位！";
+
+      physicsChart.setData(currentTrajectory, video.duration);
+      analysisChart.setData(currentTrajectory, video.duration);
+      renderAnalysisTable();
+      if (!analysisWorkspace.classList.contains("hidden")) {
+        analysisChart.render(video.currentTime);
+      }
+    }
 
     function getClipBounds() {
       const dur = (video.duration && isFinite(video.duration)) ? video.duration : 10;
@@ -463,8 +599,7 @@
 
     syncManager.onPhysicsDataChange((trajectory) => {
       console.log(`收到軌跡物理數據，共 ${trajectory.length} 影格點`);
-      currentTrajectory = trajectory;
-      physicsChart.setData(trajectory, video.duration);
+      setTrajectoryData(trajectory);
 
       if (hasLoadedVideo) {
         standbyOverlay.classList.add("hidden");
@@ -631,20 +766,88 @@
       spbToggleLoop.classList.toggle("active", video.loop);
     };
 
-    // 8. 大屏端繪圖工具列 (Drawing Toolbar) 邏輯
+    // 8. 大屏端繪圖與「點選影像點」雙模式工具列邏輯
+    const sdtSelectMode = document.getElementById("sdtSelectMode");
     const sdtTogglePen = document.getElementById("sdtTogglePen");
     const sdtEraser = document.getElementById("sdtEraser");
     const sdtUndo = document.getElementById("sdtUndo");
     const sdtClear = document.getElementById("sdtClear");
+    const videoWrapper = document.getElementById("videoWrapper");
+
+    function updateDrawOrSelectUI() {
+      const drawing = annotationLayer.enabled;
+      sdtTogglePen.classList.toggle("active", drawing);
+      sdtSelectMode.classList.toggle("active", !drawing);
+      videoWrapper.style.cursor = drawing ? "crosshair" : "pointer";
+    }
+    updateDrawOrSelectUI();
+
+    sdtSelectMode.onclick = () => {
+      annotationLayer.setEnabled(false);
+      sdtEraser.classList.remove("active");
+      updateDrawOrSelectUI();
+    };
 
     sdtTogglePen.onclick = () => {
       const willEnable = !annotationLayer.enabled;
       annotationLayer.setEnabled(willEnable);
-      sdtTogglePen.classList.toggle("active", willEnable);
       if (willEnable) {
         annotationLayer.setMode("pen");
         sdtEraser.classList.remove("active");
       }
+      updateDrawOrSelectUI();
+    };
+
+    // 影像點選與表格/圖表雙向連動核心函式
+    function selectTrajectoryPoint(index, { seekVideo = true, scrollTable = true } = {}) {
+      if (!currentTrajectory || !currentTrajectory[index]) return;
+      selectedPointIndex = index;
+      const pt = currentTrajectory[index];
+
+      vectorDrawer.setSelectedIndex(index);
+      physicsChart.setSelectedIndex(index);
+      analysisChart.setSelectedIndex(index);
+
+      if (seekVideo && hasLoadedVideo) {
+        video.pause();
+        const { start, end } = getClipBounds();
+        video.currentTime = Math.min(end, Math.max(start, pt.t));
+      }
+
+      // 更新表格選取列高亮
+      const rows = document.querySelectorAll("#analysisTableBody tr[data-idx]");
+      rows.forEach(r => {
+        const isSel = Number(r.dataset.idx) === index;
+        r.classList.toggle("selected-row", isSel);
+        if (isSel && scrollTable) {
+          r.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+      });
+
+      document.getElementById("selectedPointBanner").textContent =
+        `🎯 已選取影像點 #${index} | t = ${pt.t.toFixed(3)}s | x = ${pt.meterX.toFixed(3)}m, y = ${pt.meterY.toFixed(3)}m | vy = ${pt.vy.toFixed(2)} m/s | ay = ${pt.ay.toFixed(2)} m/s²`;
+      document.getElementById("btnJumpToSelectedVideo").style.display = hasLoadedVideo ? "inline-flex" : "none";
+
+      physicsChart.render(pt.t);
+      if (!analysisWorkspace.classList.contains("hidden")) {
+        analysisChart.render(pt.t);
+      }
+    }
+
+    // 點擊影片上的追蹤點 -> 高亮對應影像點與圖表上的該點
+    videoWrapper.addEventListener("click", (e) => {
+      if (annotationLayer.enabled || !currentTrajectory || currentTrajectory.length === 0) return;
+      const hit = vectorDrawer.findNearestPoint(video, currentTrajectory, e.clientX, e.clientY, 40);
+      if (hit) {
+        selectTrajectoryPoint(hit.index, { seekVideo: true, scrollTable: true });
+      }
+    });
+
+    physicsChart.onPointSelect = (idx) => {
+      selectTrajectoryPoint(idx, { seekVideo: true, scrollTable: true });
+    };
+    analysisChart.onPointSelect = (idx) => {
+      selectTrajectoryPoint(idx, { seekVideo: true, scrollTable: true });
     };
 
     document.querySelectorAll(".sdt-color-dot").forEach(dot => {
@@ -766,13 +969,163 @@
       screenDrawToolbar.classList.toggle("hidden");
     };
 
-    // 10. 頂部列其他事件綁定
-    document.getElementById("btnToggleHud").onclick = () => {
-      physicsHud.classList.toggle("hidden");
+    // 10. 數據分析雙欄頁面 (左 1/3 表格 + 右 2/3 圖表 + Fitting + Excel 匯出)
+    function renderAnalysisTable() {
+      const tbody = document.getElementById("analysisTableBody");
+      const countBadge = document.getElementById("analysisPointCount");
+      countBadge.textContent = `${currentTrajectory.length} 點`;
+
+      if (!currentTrajectory || currentTrajectory.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 36px; color: #64748b;">尚無分析數據，請先載入示範影片或從手機端同步資料</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = currentTrajectory.map((pt, idx) => `
+        <tr data-idx="${idx}" class="${selectedPointIndex === idx ? "selected-row" : ""}">
+          <td>${idx}</td>
+          <td>${pt.t.toFixed(3)}</td>
+          <td>${pt.meterX.toFixed(3)}</td>
+          <td>${pt.meterY.toFixed(3)}</td>
+          <td>${pt.vx.toFixed(2)}</td>
+          <td>${pt.vy.toFixed(2)}</td>
+          <td>${pt.ax.toFixed(2)}</td>
+          <td>${pt.ay.toFixed(2)}</td>
+        </tr>
+      `).join("");
+
+      tbody.querySelectorAll("tr[data-idx]").forEach(row => {
+        row.onclick = () => {
+          selectTrajectoryPoint(Number(row.dataset.idx), { seekVideo: true, scrollTable: false });
+        };
+      });
+    }
+
+    function toggleAnalysisView(forceOpen = null) {
+      const willOpen = forceOpen !== null ? forceOpen : analysisWorkspace.classList.contains("hidden");
+      analysisWorkspace.classList.toggle("hidden", !willOpen);
+      document.getElementById("btnToggleAnalysisView").classList.toggle("active", willOpen);
+      if (willOpen) {
+        setTimeout(() => {
+          analysisChart.syncSize();
+          analysisChart.render(video.currentTime);
+        }, 60);
+      }
+    }
+
+    document.getElementById("btnToggleAnalysisView").onclick = () => toggleAnalysisView();
+    document.getElementById("btnCloseAnalysisView").onclick = () => toggleAnalysisView(false);
+    document.getElementById("btnJumpToSelectedVideo").onclick = () => toggleAnalysisView(false);
+
+    // 數據分析頁圖表切換與縮放控制
+    document.querySelectorAll("[data-achart]").forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll("[data-achart]").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        analysisChart.setType(btn.dataset.achart);
+        analysisChart.render(video.currentTime);
+      };
+    });
+
+    const analysisAxisFilter = document.getElementById("analysisAxisFilter");
+    analysisAxisFilter.onchange = () => {
+      analysisChart.setAxisFilter(analysisAxisFilter.value);
+      analysisChart.render(video.currentTime);
     };
 
-    document.getElementById("btnClearDraw").onclick = () => {
-      annotationLayer.clear(true);
+    const btnAnaFocus = document.getElementById("btnAnaFocus");
+    const anaZoomBadge = document.getElementById("anaZoomBadge");
+    analysisChart.onZoomChange = ({ yZoom, xZoom, focusDataRange }) => {
+      btnAnaFocus.classList.toggle("active", focusDataRange);
+      btnAnaFocus.textContent = focusDataRange ? "🎯 聚焦" : "0️⃣ 含零點";
+      anaZoomBadge.textContent = xZoom > 1.05
+        ? `Y:${yZoom.toFixed(1)}x T:${xZoom.toFixed(1)}x`
+        : `${yZoom.toFixed(1)}x`;
+    };
+
+    btnAnaFocus.onclick = () => {
+      analysisChart.toggleFocusMode();
+      analysisChart.render(video.currentTime);
+    };
+    document.getElementById("btnAnaZoomIn").onclick = () => {
+      analysisChart.zoomY(1.4);
+      analysisChart.render(video.currentTime);
+    };
+    document.getElementById("btnAnaZoomOut").onclick = () => {
+      analysisChart.zoomY(1 / 1.4);
+      analysisChart.render(video.currentTime);
+    };
+    document.getElementById("btnAnaTimeIn").onclick = () => {
+      analysisChart.zoomX(1.4);
+      analysisChart.render(video.currentTime);
+    };
+    document.getElementById("btnAnaZoomReset").onclick = () => {
+      analysisChart.resetZoom();
+      analysisChart.render(video.currentTime);
+    };
+
+    // Curve Fitting 回歸擬合控制
+    document.getElementById("btnRunFit").onclick = () => {
+      if (!currentTrajectory || currentTrajectory.length < 3) {
+        alert("尚無足夠的數據點可供擬合，請先載入或分析影片！");
+        return;
+      }
+      const targetKey = document.getElementById("fitTargetSelect").value;
+      const modelType = document.getElementById("fitModelSelect").value;
+
+      try {
+        const fit = computeCurveFit(currentTrajectory, targetKey, modelType);
+        currentFitResult = fit;
+
+        // 自動切換圖表頁籤對應所選的擬合物理量
+        const chartType = (targetKey === "meterX" || targetKey === "meterY")
+          ? "xt"
+          : ((targetKey === "vx" || targetKey === "vy") ? "vt" : "at");
+        document.querySelectorAll("[data-achart]").forEach(b => {
+          b.classList.toggle("active", b.dataset.achart === chartType);
+        });
+        analysisChart.setType(chartType);
+        analysisChart.setFitResult(fit);
+        analysisChart.render(video.currentTime);
+
+        physicsChart.setFitResult(fit);
+        physicsChart.render(video.currentTime);
+
+        document.getElementById("fitEquationText").textContent = fit.equationText;
+        document.getElementById("fitMetaText").textContent = `R² = ${fit.r2.toFixed(4)}  |  ${fit.physicsHint}`;
+        document.getElementById("fittingResultBanner").classList.add("active");
+      } catch (err) {
+        alert("曲線擬合失敗: " + (err.message || err));
+      }
+    };
+
+    document.getElementById("btnClearFit").onclick = () => {
+      currentFitResult = null;
+      analysisChart.setFitResult(null);
+      physicsChart.setFitResult(null);
+      document.getElementById("fittingResultBanner").classList.remove("active");
+      analysisChart.render(video.currentTime);
+      physicsChart.render(video.currentTime);
+    };
+
+    // Excel (.xlsx) 匯出按鈕綁定
+    async function handleExportExcel() {
+      if (!currentTrajectory || currentTrajectory.length === 0) {
+        alert("目前尚無物理數據可匯出，請先載入影片或從手機端同步資料！");
+        return;
+      }
+      try {
+        const res = await exportTrajectoryToExcel(currentTrajectory, currentFitResult, "physics-tracker");
+        console.log(`成功匯出 ${res.count} 筆數據 (${res.format})`);
+      } catch (err) {
+        alert("匯出 Excel 失敗: " + (err.message || err));
+      }
+    }
+    document.getElementById("btnExportExcel").onclick = handleExportExcel;
+    document.getElementById("btnTopExportExcel").onclick = handleExportExcel;
+
+    // 11. 頂部列其他事件綁定
+    document.getElementById("btnToggleHud").onclick = () => {
+      physicsHud.classList.toggle("hidden");
     };
 
     document.getElementById("btnFullscreen").onclick = () => {
@@ -813,8 +1166,7 @@
 
         const raw = await tracker.analyzeVideo(video);
         const processed = physicsEngine.processTrajectory(raw);
-        currentTrajectory = processed;
-        physicsChart.setData(processed, video.duration);
+        setTrajectoryData(processed);
 
         standbyOverlay.classList.add("hidden");
         video.loop = true;
@@ -859,8 +1211,12 @@
       vectorDrawer.syncSizeWithVideo(video);
       annotationLayer.syncSize(video);
       physicsChart.syncSize();
+      analysisChart.syncSize();
       if (currentTrajectory.length > 0) {
         physicsChart.render(video.currentTime);
+        if (!analysisWorkspace.classList.contains("hidden")) {
+          analysisChart.render(video.currentTime);
+        }
       }
     });
   </script>
