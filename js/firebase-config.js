@@ -6,15 +6,16 @@
  * 3. Firebase Realtime Database：選配雲端同步 (支援跨網域防火牆備援)
  */
 
-// 預設 Firebase 設定 (使用者可於 UI 介面點擊「設定」隨時更換)
+// 預設 Firebase 設定 (已內建預設雲端備援；使用者可於 UI「設定」或修改此物件更換為自己的 Firebase)
 const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  databaseURL: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyBl2Mtn9p8iAloAwPkS_4GxfSGZF-pFPGQ",
+  authDomain: "physics-free-fall.firebaseapp.com",
+  databaseURL: "https://physics-free-fall-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "physics-free-fall",
+  storageBucket: "physics-free-fall.firebasestorage.app",
+  messagingSenderId: "178808101785",
+  appId: "1:178808101785:web:8295b3b6b189a8c78c1108",
+  measurementId: "G-G0L9SR5K4L"
 };
 
 const CHUNK_SIZE = 14 * 1024; // WebRTC 跨瀏覽器安全分片大小 (14 KB，嚴格低於 16 KB SCTP 上限)
@@ -53,6 +54,10 @@ export class SyncManager {
     this.isFirebaseReady = false;
     this.firebaseApp = null;
     this.db = null;
+    this.firebaseUnsubs = [];
+    this.sessionStartedAt = Date.now();
+    this.lastFbCmdId = null;
+    this.lastFbSensorSentAt = 0;
 
     // P2P 狀態
     this.peer = null;
@@ -514,21 +519,27 @@ export class SyncManager {
   loadFirebaseConfig() {
     try {
       const saved = localStorage.getItem("physics_tracker_firebase_config");
-      const config = saved ? JSON.parse(saved) : DEFAULT_FIREBASE_CONFIG;
+      const parsed = saved ? JSON.parse(saved) : null;
+      const config = (parsed && parsed.apiKey && parsed.databaseURL) ? parsed : DEFAULT_FIREBASE_CONFIG;
       if (config.apiKey && config.databaseURL) {
         this.initFirebase(config);
       }
     } catch (e) {
-      console.warn("Firebase 本地設定載入失敗，將採用本機/P2P通道:", e);
+      console.warn("Firebase 本地設定載入失敗，將採用預設或 P2P 通道:", e);
+      if (DEFAULT_FIREBASE_CONFIG.apiKey && DEFAULT_FIREBASE_CONFIG.databaseURL) {
+        this.initFirebase(DEFAULT_FIREBASE_CONFIG);
+      }
     }
   }
 
   async initFirebase(config) {
     try {
-      const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js");
+      const { initializeApp, getApps } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js");
       const { getDatabase, ref, onValue, set, push, update } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js");
 
-      this.firebaseApp = initializeApp(config);
+      const existing = getApps();
+      const matched = existing.find(a => a.options?.databaseURL === config.databaseURL && a.options?.apiKey === config.apiKey);
+      this.firebaseApp = matched || initializeApp(config, existing.length > 0 ? `pt_${Date.now()}` : undefined);
       this.db = getDatabase(this.firebaseApp);
       this.fbRef = ref;
       this.fbOnValue = onValue;
@@ -549,34 +560,69 @@ export class SyncManager {
     }
   }
 
+  clearFirebaseListeners() {
+    if (this.firebaseUnsubs && this.firebaseUnsubs.length > 0) {
+      for (const unsub of this.firebaseUnsubs) {
+        try { if (typeof unsub === "function") unsub(); } catch (e) {}
+      }
+      this.firebaseUnsubs = [];
+    }
+  }
+
   listenToFirebase() {
     if (!this.isFirebaseReady || !this.db) return;
+    this.clearFirebaseListeners();
 
     const screenPath = `screens/${this.screenId}`;
 
-    this.fbOnValue(this.fbRef(this.db, `${screenPath}/status`), (snapshot) => {
+    this.firebaseUnsubs.push(this.fbOnValue(this.fbRef(this.db, `${screenPath}/status`), (snapshot) => {
       const val = snapshot.val();
       if (val) this.triggerCallbacks("status", val);
-    });
+    }));
 
-    this.fbOnValue(this.fbRef(this.db, `${screenPath}/displayOpts`), (snapshot) => {
+    this.firebaseUnsubs.push(this.fbOnValue(this.fbRef(this.db, `${screenPath}/displayOpts`), (snapshot) => {
       const val = snapshot.val();
       if (val) this.triggerCallbacks("displayOpts", val);
-    });
+    }));
 
-    this.fbOnValue(this.fbRef(this.db, `${screenPath}/physicsData`), (snapshot) => {
+    this.firebaseUnsubs.push(this.fbOnValue(this.fbRef(this.db, `${screenPath}/physicsData`), (snapshot) => {
       const val = snapshot.val();
       if (val) this.triggerCallbacks("physicsData", val);
-    });
+    }));
 
-    this.fbOnValue(this.fbRef(this.db, `${screenPath}/drawEvents`), (snapshot) => {
+    this.firebaseUnsubs.push(this.fbOnValue(this.fbRef(this.db, `${screenPath}/drawEvents`), (snapshot) => {
       const val = snapshot.val();
       if (val) {
         const keys = Object.keys(val);
         const latest = val[keys[keys.length - 1]];
         if (latest) this.triggerCallbacks("drawEvents", latest);
       }
-    });
+    }));
+
+    this.firebaseUnsubs.push(this.fbOnValue(this.fbRef(this.db, `${screenPath}/labCommand`), (snapshot) => {
+      const val = snapshot.val();
+      if (val && val.cmd && val.cmdId !== this.lastFbCmdId && val.ts >= this.sessionStartedAt && val.senderRole !== this.role) {
+        this.lastFbCmdId = val.cmdId;
+        if (val.cmd === "SET_MODE" && val.mode) {
+          this.activeLabMode = val.mode;
+        }
+        this.triggerCallbacks("labCommand", val);
+      }
+    }));
+
+    // 若 P2P 未連線 (防火牆封鎖時)，自動接收 Firebase 即時感測封包備援
+    this.firebaseUnsubs.push(this.fbOnValue(this.fbRef(this.db, `${screenPath}/sensorLatest`), (snapshot) => {
+      if (this.p2pConnected) return;
+      const val = snapshot.val();
+      if (!val) return;
+      for (const nodeKey of Object.keys(val)) {
+        const pkt = val[nodeKey];
+        if (pkt && pkt.mode && pkt.data && pkt.ts >= this.sessionStartedAt) {
+          this.recordNodeSeen(pkt.id || nodeKey);
+          this.triggerCallbacks("sensorData", pkt);
+        }
+      }
+    }));
   }
 
   triggerCallbacks(type, data) {
@@ -864,7 +910,22 @@ export class SyncManager {
       data
     };
     try { this.bc.postMessage({ type: "SENSOR_DATA", data: packet }); } catch (e) {}
-    return this.postToP2P(packet);
+    const sentP2P = this.postToP2P(packet);
+
+    // 僅在 P2P 無法直連時以 Firebase 備援同步 (節流 120ms 避免頻繁寫入)
+    if (!sentP2P && this.isFirebaseReady && this.db) {
+      const nowMs = Date.now();
+      if (nowMs - this.lastFbSensorSentAt >= 120) {
+        this.lastFbSensorSentAt = nowMs;
+        try {
+          this.fbSet(this.fbRef(this.db, `screens/${this.screenId}/sensorLatest/${this.nodeId || "node_01"}`), {
+            ...packet,
+            ts: nowMs
+          }).catch(() => {});
+        } catch (e) {}
+      }
+    }
+    return sentP2P;
   }
 
   /**
@@ -875,7 +936,20 @@ export class SyncManager {
       this.activeLabMode = cmdPayload.mode;
     }
     try { this.bc.postMessage({ type: "LAB_CMD", data: cmdPayload }); } catch (e) {}
-    return this.postToP2P({ type: "LAB_CMD", data: cmdPayload });
+    const sentP2P = this.postToP2P({ type: "LAB_CMD", data: cmdPayload });
+
+    if (this.isFirebaseReady && this.db) {
+      try {
+        const fbPayload = {
+          ...cmdPayload,
+          cmdId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          ts: Date.now(),
+          senderRole: this.role
+        };
+        this.fbSet(this.fbRef(this.db, `screens/${this.screenId}/labCommand`), fbPayload).catch(() => {});
+      } catch (e) {}
+    }
+    return sentP2P;
   }
 
   // --- 監聽端註冊 ---
@@ -932,6 +1006,7 @@ export class SyncManager {
   destroy() {
     this.destroyed = true;
     this.activeTransferId = null;
+    this.clearFirebaseListeners();
     if (this.bc) {
       try { this.bc.close(); } catch (e) {}
     }

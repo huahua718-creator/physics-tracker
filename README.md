@@ -112,6 +112,37 @@ physics-tracker/
 
 ---
 
+## 🔥 預設 Firebase 設定與更換成自己的 Firebase Config
+
+本專案已在 [js/firebase-config.js](js/firebase-config.js) 內建預設的 Firebase Realtime Database 作為跨網域／校網防火牆時的雲端備援通道，開箱即可運作。
+
+若其他老師或團隊希望改用**自己的 Firebase 資料庫**（避免共用流量或配合自架站台），有兩種設定方式：
+
+### 方法一：直接於網頁「⚙️ 設定」覆寫（免改程式碼）
+1. 至 [Firebase Console](https://console.firebase.google.com/) 建立專案並啟用 **Realtime Database**（區域建議選 `asia-southeast1` 新加坡）。
+2. 在專案「設定 → 您的應用程式（網頁 `</>`）」複製 `apiKey`、`databaseURL`、`projectId`。
+3. 開啟本系統的大屏或手機端 **「⚙️ 設定」** 介面，貼上上述 3 個欄位並點擊 **「儲存」**，設定會保存在該瀏覽器的 `localStorage`（`physics_tracker_firebase_config`），即時覆寫預設值。
+
+### 方法二：Fork 專案並修改預設 `DEFAULT_FIREBASE_CONFIG`
+開啟 [js/firebase-config.js](js/firebase-config.js) 第 10 行，將 `DEFAULT_FIREBASE_CONFIG` 換成您自己 Firebase 專案的完整設定物件：
+
+```js
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "你的_API_KEY",
+  authDomain: "你的專案.firebaseapp.com",
+  databaseURL: "https://你的專案-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "你的專案_ID",
+  storageBucket: "你的專案.firebasestorage.app",
+  messagingSenderId: "你的_SENDER_ID",
+  appId: "你的_APP_ID",
+  measurementId: "你的_MEASUREMENT_ID"
+};
+```
+
+> ⚠️ **Realtime Database 規則提醒**：本系統使用房間 PIN (`screens/<pin>`) 作為免登入暫存同步空間，建立資料庫時需開放 `screens` 節點讀寫權限（或定期清理舊資料），並請勿於房間中同步機密個資。
+
+---
+
 ## 💻 本機開發與啟動方式
 
 ```bash
