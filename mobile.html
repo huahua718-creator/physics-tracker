@@ -569,9 +569,16 @@
       onDrawEvent: (e) => syncManager.sendDrawEvent(e)
     });
 
-    // 2. 標籤頁切換
+    // 2. 標籤頁切換 (手動切換至 0.入口 / 1.影像 / 2.感測 時，同步大屏實驗模式)
+    let suppressModeBroadcast = false;
+    function activateTab(tabId, { silent = true } = {}) {
+      suppressModeBroadcast = silent;
+      document.querySelector(`[data-tab="${tabId}"]`)?.click();
+      suppressModeBroadcast = false;
+    }
+
     document.querySelectorAll(".tab-btn").forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
         document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
 
@@ -581,6 +588,18 @@
 
         if (btn.dataset.tab === "tab-draw") {
           mobileAnnotation.syncSize(mobileDrawCanvas.parentElement);
+        }
+
+        if (!suppressModeBroadcast) {
+          if (btn.dataset.tab === "tab-home") {
+            await mobileSensorLab.stop();
+            syncManager.broadcastCommand({ cmd: "SET_MODE", mode: "HOME" });
+          } else if (btn.dataset.tab === "tab-track") {
+            await mobileSensorLab.stop();
+            syncManager.broadcastCommand({ cmd: "SET_MODE", mode: "VIDEO_TRACKER" });
+          } else if (btn.dataset.tab === "tab-sensors") {
+            syncManager.broadcastCommand({ cmd: "SET_MODE", mode: selectedSensorMode });
+          }
         }
       };
     });
@@ -1561,7 +1580,9 @@
     mobileSensorGrid.querySelectorAll(".sensor-mode-chip").forEach(btn => {
       btn.onclick = async () => {
         await mobileSensorLab.stop();
-        selectMobileSensorMode(btn.dataset.sensorMode);
+        const modeId = btn.dataset.sensorMode;
+        selectMobileSensorMode(modeId);
+        syncManager.broadcastCommand({ cmd: "SET_MODE", mode: modeId });
       };
     });
     selectMobileSensorMode(selectedSensorMode);
@@ -1598,15 +1619,18 @@
     syncManager.onLabCommand(async (cmdObj) => {
       if (!cmdObj || !cmdObj.cmd) return;
       if (cmdObj.cmd === "SET_MODE" && cmdObj.mode) {
-        if (cmdObj.mode === "VIDEO_TRACKER") {
+        if (cmdObj.mode === "HOME") {
           await mobileSensorLab.stop();
-          document.querySelector('[data-tab="tab-track"]')?.click();
+          activateTab("tab-home", { silent: true });
+        } else if (cmdObj.mode === "VIDEO_TRACKER") {
+          await mobileSensorLab.stop();
+          activateTab("tab-track", { silent: true });
         } else if (LAB_MODES[cmdObj.mode]) {
           if (mobileSensorLab.running && mobileSensorLab.activeMode !== cmdObj.mode) {
             await mobileSensorLab.stop();
           }
           selectMobileSensorMode(cmdObj.mode);
-          document.querySelector('[data-tab="tab-sensors"]')?.click();
+          activateTab("tab-sensors", { silent: true });
         }
       } else if (cmdObj.cmd === "ZERO_TARE") {
         mobileSensorLab.zeroTare();
@@ -1650,14 +1674,14 @@
         const modeId = btn.dataset.homeMode;
         if (modeId === "VIDEO_TRACKER") {
           await mobileSensorLab.stop();
-          document.querySelector('[data-tab="tab-track"]')?.click();
+          activateTab("tab-track", { silent: true });
           syncManager.broadcastCommand({ cmd: "SET_MODE", mode: "VIDEO_TRACKER" });
         } else if (LAB_MODES[modeId]) {
           if (mobileSensorLab.running && mobileSensorLab.activeMode !== modeId) {
             await mobileSensorLab.stop();
           }
           selectMobileSensorMode(modeId);
-          document.querySelector('[data-tab="tab-sensors"]')?.click();
+          activateTab("tab-sensors", { silent: true });
           syncManager.broadcastCommand({ cmd: "SET_MODE", mode: modeId });
         }
       };

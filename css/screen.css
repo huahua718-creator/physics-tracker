@@ -157,7 +157,7 @@ body {
   pointer-events: auto; /* 允許大屏觸控螢幕直接手寫 */
 }
 
-/* 待機配對畫面 (Pairing View) */
+/* 待機配對畫面 (Pairing View / 0 分頁) */
 .standby-overlay {
   position: absolute;
   inset: 0;
@@ -166,8 +166,23 @@ body {
   justify-content: center;
   align-items: center;
   background: radial-gradient(circle at center, #1e293b 0%, #0b0f19 75%);
-  z-index: 40;
-  transition: opacity 0.4s ease, visibility 0.4s;
+  z-index: 68;
+  transition: opacity 0.35s ease, visibility 0.35s;
+}
+
+/* 非「影像追蹤」實驗模式（包含 0 分頁與 5 大感測器）時，隱藏所有影像分析專屬 UI */
+body.mode-non-video #btnToggleAnalysisView,
+body.mode-non-video #btnTopExportExcel,
+body.mode-non-video #btnProjectModal,
+body.mode-non-video #btnToggleChart,
+body.mode-non-video #btnToggleDraw,
+body.mode-non-video #btnToggleHud,
+body.mode-non-video #physicsHud,
+body.mode-non-video #physicsChartPanel,
+body.mode-non-video #screenPlaybackBar,
+body.mode-non-video #screenDrawToolbar,
+body.mode-non-video #legendPanel {
+  display: none !important;
 }
 
 .standby-overlay.hidden {

@@ -599,6 +599,8 @@
       const fallbackDur = currentTrajectory.length > 0 ? currentTrajectory[currentTrajectory.length - 1].t : 1;
       const chartDur = (video.duration && isFinite(video.duration)) ? video.duration : fallbackDur;
       if (currentTrajectory.length > 0) {
+        currentLabMode = "VIDEO_TRACKER";
+        document.body.classList.remove("mode-non-video");
         document.getElementById("videoWaitBanner")?.classList.add("hidden");
       }
       physicsChart.setData(currentTrajectory, chartDur, secondaryTrajectory);
@@ -687,6 +689,8 @@
         setTimeout(() => { receiveProgressBox.style.display = "none"; }, 400);
 
         console.log(`✅ 已完整接收手機影片 (${evt.name})，準備播放！`);
+        currentLabMode = "VIDEO_TRACKER";
+        document.body.classList.remove("mode-non-video");
         currentVideoBlob = evt.blob || null;
         currentVideoName = evt.name || "mobile_video.mp4";
         video.src = evt.url;
@@ -708,6 +712,8 @@
         standbyStatusText.textContent = "⏳ 正在同步生成示範影片...";
         try {
           const blob = await VideoTracker.generateDemoVideo(2.5, 60);
+          currentLabMode = "VIDEO_TRACKER";
+          document.body.classList.remove("mode-non-video");
           currentVideoBlob = blob;
           currentVideoName = "demo_projectile.webm";
           video.src = URL.createObjectURL(blob);
@@ -1782,8 +1788,13 @@
       ? urlParams.get("mode")
       : "HOME";
 
-    function openPageZeroHome() {
+    function updateVideoChromeVisibility(modeId) {
+      document.body.classList.toggle("mode-non-video", modeId !== "VIDEO_TRACKER");
+    }
+
+    function openPageZeroHome({ broadcast = true } = {}) {
       currentLabMode = "HOME";
+      updateVideoChromeVisibility("HOME");
       sensorLab.setMode("VIDEO_TRACKER");
       analysisWorkspace.classList.add("hidden");
       document.getElementById("btnToggleAnalysisView").classList.remove("active");
@@ -1791,15 +1802,19 @@
       standbyOverlay.classList.remove("hidden");
       expModeDrawer.classList.add("hidden");
       document.querySelectorAll("[data-lab-mode]").forEach(btn => btn.classList.remove("active"));
+      if (broadcast) {
+        syncManager.broadcastCommand({ cmd: "SET_MODE", mode: "HOME" });
+      }
     }
 
     function switchLabMode(modeId, { broadcast = true } = {}) {
       if (modeId === "HOME") {
-        openPageZeroHome();
+        openPageZeroHome({ broadcast });
         return;
       }
       if (!LAB_MODES[modeId]) return;
       currentLabMode = modeId;
+      updateVideoChromeVisibility(modeId);
 
       document.querySelectorAll("[data-lab-mode]").forEach(btn => {
         btn.classList.toggle("active", btn.dataset.labMode === modeId);
@@ -1826,6 +1841,8 @@
         syncManager.broadcastCommand({ cmd: "SET_MODE", mode: modeId });
       }
     }
+
+    updateVideoChromeVisibility(currentLabMode);
 
     function renderLabHubCards() {
       standbyHubGrid.innerHTML = LAB_MODE_ORDER.map(id => {
@@ -1854,9 +1871,9 @@
     }
     renderLabHubCards();
 
-    document.getElementById("btnHomeHub").onclick = () => openPageZeroHome();
-    document.getElementById("btnDrawerGoHome").onclick = () => openPageZeroHome();
-    document.getElementById("btnBannerHome").onclick = () => openPageZeroHome();
+    document.getElementById("btnHomeHub").onclick = () => openPageZeroHome({ broadcast: true });
+    document.getElementById("btnDrawerGoHome").onclick = () => openPageZeroHome({ broadcast: true });
+    document.getElementById("btnBannerHome").onclick = () => openPageZeroHome({ broadcast: true });
     document.getElementById("btnBannerDemo").onclick = () => document.getElementById("btnLoadDemoDirectly").click();
 
     document.getElementById("btnToggleExpDrawer").onclick = () => {
@@ -1874,7 +1891,7 @@
     });
 
     syncManager.onLabCommand((cmdObj) => {
-      if (cmdObj?.cmd === "SET_MODE" && cmdObj.mode && LAB_MODES[cmdObj.mode]) {
+      if (cmdObj?.cmd === "SET_MODE" && (cmdObj.mode === "HOME" || LAB_MODES[cmdObj.mode])) {
         switchLabMode(cmdObj.mode, { broadcast: false });
       }
     });

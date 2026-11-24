@@ -71,7 +71,7 @@ export class SyncManager {
 
     // 多機節點與實驗模式狀態
     this.connectedNodes = new Map(); // key -> { key, nodeId, color, lastSeen, conn }
-    this.activeLabMode = "VIDEO_TRACKER";
+    this.activeLabMode = "HOME";
     this.nodeId = role === "screen" ? "screen" : this.getOrCreateMobileNodeId();
     this.nodeColor = NODE_COLORS[0];
 
