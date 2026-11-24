@@ -18,6 +18,7 @@ const DEFAULT_FIREBASE_CONFIG = {
 };
 
 const CHUNK_SIZE = 14 * 1024; // WebRTC 跨瀏覽器安全分片大小 (14 KB，嚴格低於 16 KB SCTP 上限)
+const READ_BLOCK_SIZE = 512 * 1024; // 每次從檔案預讀 512 KB 區塊，大幅減少手機 I/O 次數
 const MAX_BUFFERED_AMOUNT = 256 * 1024; // 背壓門檻 (256 KB)
 
 let peerJsLoaderPromise = null;
@@ -299,6 +300,18 @@ export class SyncManager {
       this.p2pConnections.delete(conn);
       this.p2pConnected = this.p2pConnections.size > 0;
       this.p2pStatus = this.p2pConnected ? "connected" : (this.role === "screen" ? "ready" : "waiting");
+      if (!this.p2pConnected && this.incomingVideos.size > 0) {
+        for (const [vidId, entry] of this.incomingVideos.entries()) {
+          const percent = Math.min(99, Math.round((entry.received / Math.max(1, entry.totalChunks)) * 100));
+          this.triggerCallbacks("videoReceive", {
+            state: "aborted",
+            percent,
+            id: vidId,
+            name: entry.name
+          });
+        }
+        this.incomingVideos.clear();
+      }
       this.emitConnectionState();
       if (this.role === "mobile" && !this.destroyed && !this.p2pConnected) {
         this.scheduleMobileReconnect(2500);
@@ -374,9 +387,23 @@ export class SyncManager {
       case "VIDEO_END": {
         const entry = this.incomingVideos.get(msg.id);
         if (!entry || this.completedVideoIds.has(msg.id)) return;
-        this.completedVideoIds.add(msg.id);
         this.incomingVideos.delete(msg.id);
 
+        const expectedChunks = msg.totalChunks || entry.totalChunks;
+        if (entry.received < expectedChunks) {
+          console.warn(`⚠️ 影片分片不完整 (${entry.received}/${expectedChunks})，已取消組裝`);
+          this.triggerCallbacks("videoReceive", {
+            state: "error",
+            percent: Math.round((entry.received / Math.max(1, expectedChunks)) * 100),
+            id: msg.id,
+            name: entry.name,
+            received: entry.received,
+            totalChunks: expectedChunks
+          });
+          break;
+        }
+
+        this.completedVideoIds.add(msg.id);
         const blob = new Blob(entry.chunks.filter(Boolean), { type: entry.mimeType });
         const url = URL.createObjectURL(blob);
         this.triggerCallbacks("videoReceive", {
@@ -593,6 +620,7 @@ export class SyncManager {
     }
 
     const totalChunks = Math.max(1, Math.ceil(size / CHUNK_SIZE));
+    let lastPercent = 0;
     for (const conn of openConns) {
       try {
         conn.send({ type: "VIDEO_START", id: transferId, name, mimeType, size, totalChunks });
@@ -601,35 +629,69 @@ export class SyncManager {
       }
     }
 
+    const waitForChannelBuffer = async (conn, drainToZero = false) => {
+      const dc = conn.dataChannel;
+      const limit = drainToZero ? 0 : MAX_BUFFERED_AMOUNT;
+      const startWait = Date.now();
+      while (conn.open && ((conn.bufferSize > 0) || (dc && dc.readyState === "open" && dc.bufferedAmount > limit))) {
+        if (this.destroyed || this.activeTransferId !== transferId) return false;
+        if (Date.now() - startWait > 15000) return false;
+        await new Promise(r => setTimeout(r, 20));
+      }
+      return conn.open;
+    };
+
+    let cachedBlockStart = -1;
+    let cachedBlockBytes = null;
+
     for (let index = 0; index < totalChunks; index++) {
       if (this.destroyed || this.activeTransferId !== transferId) {
-        return { sentViaP2P: false, aborted: true, sentViaLocal, transferId };
+        return {
+          sentViaP2P: false,
+          aborted: true,
+          superseded: !this.destroyed && this.activeTransferId !== transferId,
+          lastPercent,
+          sentViaLocal,
+          transferId
+        };
       }
 
       const activeConns = openConns.filter(c => c.open);
       if (activeConns.length === 0) {
-        return { sentViaP2P: false, aborted: true, disconnected: true, sentViaLocal, transferId };
+        return { sentViaP2P: false, aborted: true, disconnected: true, lastPercent, sentViaLocal, transferId };
       }
 
       const start = index * CHUNK_SIZE;
       const end = Math.min(size, start + CHUNK_SIZE);
-      const rawBuf = await fileOrBlob.slice(start, end).arrayBuffer();
-      const buffer = new Uint8Array(rawBuf);
+      if (!cachedBlockBytes || start < cachedBlockStart || end > cachedBlockStart + cachedBlockBytes.byteLength) {
+        cachedBlockStart = start;
+        const blockEnd = Math.min(size, start + READ_BLOCK_SIZE);
+        const blockBuf = await fileOrBlob.slice(start, blockEnd).arrayBuffer();
+        cachedBlockBytes = new Uint8Array(blockBuf);
+      }
+      const offsetInBlock = start - cachedBlockStart;
+      const buffer = cachedBlockBytes.slice(offsetInBlock, offsetInBlock + (end - start));
 
       for (const conn of activeConns) {
-        const dc = conn.dataChannel;
-        while (dc && dc.readyState === "open" && dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+        const ok = await waitForChannelBuffer(conn, false);
+        if (!ok) {
           if (this.destroyed || this.activeTransferId !== transferId) {
-            return { sentViaP2P: false, aborted: true, sentViaLocal, transferId };
+            return {
+              sentViaP2P: false,
+              aborted: true,
+              superseded: !this.destroyed && this.activeTransferId !== transferId,
+              lastPercent,
+              sentViaLocal,
+              transferId
+            };
           }
-          await new Promise(r => setTimeout(r, 20));
+          continue;
         }
-        if (!conn.open) continue;
         try {
           conn.send({ type: "VIDEO_CHUNK", id: transferId, index, buffer });
         } catch (e) {
           console.warn("VIDEO_CHUNK 發送異常:", e);
-          return { sentViaP2P: false, aborted: true, error: e.message, sentViaLocal, transferId };
+          return { sentViaP2P: false, aborted: true, error: e.message, lastPercent, sentViaLocal, transferId };
         }
       }
 
@@ -638,21 +700,25 @@ export class SyncManager {
         await new Promise(r => setTimeout(r, 0));
       }
 
-      const percent = Math.min(100, Math.round(((index + 1) / totalChunks) * 100));
-      onProgress({ percent, sentBytes: end, totalBytes: size });
+      lastPercent = Math.min(100, Math.round(((index + 1) / totalChunks) * 100));
+      onProgress({ percent: lastPercent, sentBytes: end, totalBytes: size });
     }
 
+    // 確保緩衝區全數清空後再送出 VIDEO_END，避免結尾封包遺失或超前
     let anySentEnd = false;
     for (const conn of openConns) {
       if (conn.open) {
-        try {
-          conn.send({ type: "VIDEO_END", id: transferId });
-          anySentEnd = true;
-        } catch (e) {}
+        await waitForChannelBuffer(conn, true);
+        if (conn.open) {
+          try {
+            conn.send({ type: "VIDEO_END", id: transferId, totalChunks });
+            anySentEnd = true;
+          } catch (e) {}
+        }
       }
     }
 
-    return { sentViaP2P: anySentEnd, sentViaLocal, transferId };
+    return { sentViaP2P: anySentEnd, lastPercent: anySentEnd ? 100 : lastPercent, sentViaLocal, transferId };
   }
 
   // --- 監聽端註冊 ---

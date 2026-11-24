@@ -367,18 +367,30 @@
       if (activeVideoTransferPromise) return activeVideoTransferPromise;
 
       const fileToSend = currentVideoFile;
-      updateTransferUI("📤 正在傳送影片至大屏...", 0);
+      const sizeMB = (fileToSend.size / (1024 * 1024)).toFixed(1);
+      updateTransferUI(`📤 正在傳送原檔影片 (${sizeMB} MB)...`, 0);
 
       activeVideoTransferPromise = syncManager.sendVideoFile(fileToSend, ({ percent }) => {
         if (currentVideoFile === fileToSend) {
-          updateTransferUI(`📤 正在傳送影片至大屏...`, percent);
+          updateTransferUI(`📤 正在傳送原檔影片 (${sizeMB} MB)...`, percent);
         }
       }).then((res) => {
         activeVideoTransferPromise = null;
-        if (res.aborted) return res;
+        if (res.aborted) {
+          if (!res.superseded) {
+            videoTransferDone = false;
+            const stoppedAt = res.lastPercent || 0;
+            updateTransferUI(
+              `⚠️ P2P 連線中斷，影片僅傳送 ${stoppedAt}% (${sizeMB} MB)。請保持同 Wi-Fi 與螢幕開啟，點擊下方按鈕重試`,
+              stoppedAt,
+              "#f59e0b"
+            );
+          }
+          return res;
+        }
         if (res.sentViaP2P) {
           videoTransferDone = true;
-          updateTransferUI("✅ 影片與物理數據已送達大屏！", 100, "#10b981");
+          updateTransferUI(`✅ 影片 (${sizeMB} MB) 與物理數據已完整送達大屏！`, 100, "#10b981");
         } else if (res.sentViaLocal) {
           updateTransferUI("ℹ️ 已透過本機通道送出 (若大屏在另一裝置，請確認 P2P 已連線)", 100, "#f59e0b");
         } else {
@@ -387,6 +399,7 @@
         return res;
       }).catch((err) => {
         activeVideoTransferPromise = null;
+        videoTransferDone = false;
         console.error("影片傳送失敗:", err);
         updateTransferUI("❌ 影片傳送失敗，請點擊下方按鈕重試", 0, "#ef4444");
         return { sentViaP2P: false, sentViaLocal: false };
@@ -753,7 +766,10 @@
 
       const { start: s, end: e } = getTrimRange();
       const span = Math.max(0, e - s);
-      trimSummaryText.textContent = `分析區間：${s.toFixed(2)} s ~ ${e.toFixed(2)} s (共 ${span.toFixed(2)} s)`;
+      const sizeHint = (currentVideoType === "custom" && currentVideoFile)
+        ? `｜原檔 ${(currentVideoFile.size / (1024 * 1024)).toFixed(1)} MB`
+        : "";
+      trimSummaryText.textContent = `分析區間：${s.toFixed(2)} s ~ ${e.toFixed(2)} s (共 ${span.toFixed(2)} s)${sizeHint}`;
 
       // 同步更新播放遙控拉桿的起訖邊界
       const rScrub = document.getElementById("remoteScrubber");
@@ -1084,12 +1100,14 @@
 
       try {
         const { start: clipStart, end: clipEnd } = getTrimRange();
+        const selectedFps = Number(document.getElementById("selectFps").value) || 60;
         mobileVideo.currentTime = clipStart;
 
         await syncManager.sendPhysicsData(processedTrajectory);
         await syncManager.updateStatus({
           state: "analyzed",
           videoType: currentVideoType,
+          fps: selectedFps,
           clipStart,
           clipEnd,
           currentTime: clipStart,
@@ -1104,12 +1122,14 @@
           updateTransferUI("✅ 示範影片與物理數據已同步至大屏！", 100, "#10b981");
         }
 
-        if (autoSwitchTab) {
+        if (autoSwitchTab && (videoTransferDone || currentVideoType !== "custom")) {
           document.querySelector('[data-tab="tab-remote"]').click();
         }
       } finally {
         pushBtn.disabled = false;
-        pushBtn.textContent = "📡 同步並前往播放遙控";
+        pushBtn.textContent = (currentVideoType === "custom" && !videoTransferDone)
+          ? "🔄 重傳影片並前往播放遙控"
+          : "📡 同步並前往播放遙控";
       }
     }
 

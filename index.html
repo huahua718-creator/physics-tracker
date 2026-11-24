@@ -446,6 +446,7 @@
     let isReceivingVideo = false;
     let clipStart = 0;
     let clipEnd = null;
+    let activeFps = 60;
 
     function setTrajectoryData(trajectory) {
       currentTrajectory = trajectory || [];
@@ -529,8 +530,16 @@
       if (evt.state === "start" || evt.state === "progress") {
         isReceivingVideo = true;
         receiveProgressBox.style.display = "block";
+        receiveProgressBar.style.background = "";
         receiveProgressBar.style.width = `${evt.percent}%`;
         standbyStatusText.textContent = `📥 正在接收手機影片 (${evt.percent}%)...`;
+      } else if (evt.state === "aborted" || evt.state === "error") {
+        isReceivingVideo = false;
+        receiveProgressBox.style.display = "block";
+        receiveProgressBar.style.background = "#ef4444";
+        standbyStatusText.textContent = evt.state === "error"
+          ? `⚠️ 影片分片不完整 (${evt.received || 0}/${evt.totalChunks || "?"})，請在手機端點擊「同步」重傳`
+          : `⚠️ 影片傳輸於 ${evt.percent || 0}% 中斷（P2P 斷線），請保持同 Wi-Fi 並於手機重試`;
       } else if (evt.state === "complete") {
         isReceivingVideo = false;
         receiveProgressBar.style.width = "100%";
@@ -577,6 +586,9 @@
       }
       if (status.clipEnd !== undefined && status.clipEnd !== null) {
         clipEnd = Number(status.clipEnd);
+      }
+      if (status.fps !== undefined && Number(status.fps) > 0) {
+        activeFps = Number(status.fps);
       }
       if (status.clipStart !== undefined || status.clipEnd !== undefined) {
         syncPlaybackBarBounds();
@@ -748,7 +760,7 @@
     spbStepBack.onclick = () => {
       video.pause();
       const { start } = getClipBounds();
-      const dt = 1 / 60;
+      const dt = 1 / activeFps;
       video.currentTime = Math.max(start, video.currentTime - dt);
       syncManager.updateStatus({ currentTime: video.currentTime, isPlaying: false });
     };
@@ -756,7 +768,7 @@
     spbStepForward.onclick = () => {
       video.pause();
       const { end } = getClipBounds();
-      const dt = 1 / 60;
+      const dt = 1 / activeFps;
       video.currentTime = Math.min(end, video.currentTime + dt);
       syncManager.updateStatus({ currentTime: video.currentTime, isPlaying: false });
     };
