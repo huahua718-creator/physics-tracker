@@ -190,11 +190,12 @@ body {
   color: #fff;
 }
 
-/* 預覽與視訊畫布容器 */
+/* 預覽與視訊畫布容器 (動態適配橫向與垂直錄影比例，不壓縮變形) */
 .preview-container {
   position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
+  width: min(100%, calc(64vh * var(--video-ar, 1.777778)));
+  aspect-ratio: var(--video-ar, 16 / 9);
+  margin: 0 auto;
   background: #000;
   border-radius: 8px;
   overflow: hidden;

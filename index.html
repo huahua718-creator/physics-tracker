@@ -915,6 +915,8 @@
 
     video.addEventListener("loadeddata", () => {
       document.getElementById("videoWaitBanner")?.classList.add("hidden");
+      vectorDrawer.syncSizeWithVideo(video);
+      annotationLayer.syncSize(video);
       syncPlaybackBarBounds();
       physicsChart.setData(currentTrajectory, video.duration || 1, secondaryTrajectory);
       analysisChart.setData(currentTrajectory, video.duration || 1, secondaryTrajectory);
@@ -1620,7 +1622,8 @@
         const span = Math.max(0.1, end - start);
         const srcW = video.videoWidth || 1280;
         const srcH = video.videoHeight || 720;
-        const scaleDown = srcW > 1280 ? (1280 / srcW) : 1;
+        const maxEdge = Math.max(srcW, srcH);
+        const scaleDown = maxEdge > 1280 ? (1280 / maxEdge) : 1;
         const outCanvas = document.createElement("canvas");
         outCanvas.width = Math.round(srcW * scaleDown);
         outCanvas.height = Math.round(srcH * scaleDown);

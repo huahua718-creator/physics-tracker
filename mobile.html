@@ -643,17 +643,31 @@
       }
     };
 
+    function syncPreviewAspect() {
+      const vw = mobileVideo.videoWidth;
+      const vh = mobileVideo.videoHeight;
+      if (!vw || !vh) return;
+      const container = previewCanvas.parentElement;
+      if (container) {
+        container.style.setProperty("--video-ar", String(vw / vh));
+      }
+      if (previewCanvas.width !== vw || previewCanvas.height !== vh) {
+        previewCanvas.width = vw;
+        previewCanvas.height = vh;
+      }
+    }
+
     function loadVideoUrl(url, videoType = "custom") {
+      const container = previewCanvas.parentElement;
+      if (container) container.style.removeProperty("--video-ar");
       mobileVideo.src = url;
       mobileVideo.load();
 
       let readyNotified = false;
       const onVideoReady = () => {
-        if (readyNotified) return;
+        syncPreviewAspect();
+        if (readyNotified || !mobileVideo.videoWidth) return;
         readyNotified = true;
-
-        previewCanvas.width = mobileVideo.videoWidth || 640;
-        previewCanvas.height = mobileVideo.videoHeight || 360;
 
         // 初始化預設水平的尺標兩點 (單位：公尺)
         initDefaultHorizontalRuler(videoType);
@@ -728,22 +742,24 @@
 
     function drawPreviewFrame(aimInfo = null) {
       if (!mobileVideo.videoWidth) return;
+      syncPreviewAspect();
       previewCtx.drawImage(mobileVideo, 0, 0, previewCanvas.width, previewCanvas.height);
 
       const realLen = Number(inputRealLength.value) || 1.0;
 
-      // 繪製尺標標記 (全部以公尺與水平傾角標示，不使用像素單位)
+      // 繪製尺標標記 (全部以公尺與水平傾角標示，不使用像素單位；支援橫向與垂直影片比例)
       if (scalePoints.length > 0) {
+        const refSpan = Math.max(previewCanvas.width, previewCanvas.height);
         previewCtx.save();
         previewCtx.strokeStyle = "#38bdf8";
         previewCtx.fillStyle = "#38bdf8";
-        previewCtx.lineWidth = Math.max(3, previewCanvas.width / 320);
-        const fontSize = Math.max(14, Math.round(previewCanvas.width / 55));
+        previewCtx.lineWidth = Math.max(3, refSpan / 360);
+        const fontSize = Math.max(14, Math.round(refSpan / 58));
         previewCtx.font = `bold ${fontSize}px -apple-system, sans-serif`;
 
         scalePoints.forEach((p, idx) => {
           previewCtx.beginPath();
-          previewCtx.arc(p.x, p.y, Math.max(6, previewCanvas.width / 160), 0, Math.PI * 2);
+          previewCtx.arc(p.x, p.y, Math.max(6, refSpan / 180), 0, Math.PI * 2);
           previewCtx.fill();
           previewCtx.fillText(`P${idx + 1}`, p.x + 10, p.y - 10);
         });
@@ -791,7 +807,8 @@
       // 長按拖曳時的上方偏移準心與局部放大鏡 (避免手機螢幕太小被手指擋住)
       if (aimInfo) {
         const { fingerX, fingerY, aimX, aimY } = aimInfo;
-        const unit = Math.max(1, previewCanvas.width / 320);
+        const refSpan = Math.max(previewCanvas.width, previewCanvas.height);
+        const unit = Math.max(1, refSpan / 360);
         const dotColor = calibrationMode === "ruler"
           ? "#38bdf8"
           : (trackingMode === "dual" && activePickTarget === "B" ? "#fb7185" : "#facc15");
@@ -814,7 +831,7 @@
         previewCtx.setLineDash([]);
 
         // 3. 局部 2.6x 圓形放大鏡 (顯示在準心旁，不遮擋目標)
-        const loupeR = Math.max(36, previewCanvas.width * 0.065);
+        const loupeR = Math.max(36, refSpan * 0.062);
         const loupeX = aimX < previewCanvas.width * 0.25 ? aimX + loupeR + 18 * unit : (aimX > previewCanvas.width * 0.75 ? aimX - loupeR - 18 * unit : aimX);
         const loupeY = aimY > loupeR * 2.2 ? aimY - loupeR - 18 * unit : aimY + loupeR + 24 * unit;
         const srcHalf = loupeR / 2.6;
@@ -994,7 +1011,8 @@
         // 示範影片自帶 1.0 m 標準水平線段
         scalePoints = [{ x: 120, y: 640 }, { x: 370, y: 640 }];
       } else {
-        const span = Math.max(80, Math.round(w * 0.25));
+        const spanRatio = w < h ? 0.42 : 0.25;
+        const span = Math.max(80, Math.round(w * spanRatio));
         const yPos = Math.round(h * 0.85);
         const xStart = Math.round((w - span) / 2);
         scalePoints = [{ x: xStart, y: yPos }, { x: xStart + span, y: yPos }];
